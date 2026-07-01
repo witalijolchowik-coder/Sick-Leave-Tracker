@@ -353,33 +353,35 @@ function ProjectCard({ stats, previousRange }) {
             <Box
               aria-label={`${stats.sickCount} pracowników na L4`}
               sx={{
-                minWidth: hasSickLeaves ? 86 : 48,
-                height: hasSickLeaves ? 34 : "auto",
-                px: hasSickLeaves ? 0.9 : 0,
-                borderRadius: 999,
-                color: hasSickLeaves ? "#FF7188" : "text.primary",
-                bgcolor: hasSickLeaves ? alpha("#FF5F78", 0.09) : "transparent",
-                border: "1px solid",
-                borderColor: hasSickLeaves ? alpha("#FF5F78", 0.34) : "transparent",
-                boxShadow: hasSickLeaves
-                  ? `0 0 16px ${alpha("#FF5F78", 0.1)}`
-                  : "none",
-                display: hasSickLeaves ? "flex" : "block",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: hasSickLeaves ? 0.45 : 0,
-                whiteSpace: "nowrap",
+                minWidth: 48,
+                position: "relative",
+                isolation: "isolate",
+                "&::before": hasSickLeaves
+                  ? {
+                      content: '""',
+                      position: "absolute",
+                      zIndex: -1,
+                      width: 38,
+                      height: 28,
+                      left: -7,
+                      top: -6,
+                      borderRadius: "50%",
+                      bgcolor: alpha("#FF5F78", 0.18),
+                      filter: "blur(10px)",
+                    }
+                  : {},
               }}
             >
-              {hasSickLeaves && (
-                <MonitorHeartRoundedIcon sx={{ fontSize: 16, color: "#FF5F78" }} />
-              )}
               <Typography
                 variant="h6"
                 sx={{
                   lineHeight: 1,
-                  fontSize: hasSickLeaves ? 19 : undefined,
-                  color: "inherit",
+                  fontSize: hasSickLeaves ? 24 : undefined,
+                  fontWeight: hasSickLeaves ? 900 : undefined,
+                  color: hasSickLeaves ? "#FF7188" : "text.primary",
+                  textShadow: hasSickLeaves
+                    ? `0 0 14px ${alpha("#FF5F78", 0.38)}`
+                    : "none",
                 }}
               >
                 {stats.sickCount}
@@ -387,13 +389,11 @@ function ProjectCard({ stats, previousRange }) {
               <Typography
                 variant="caption"
                 sx={{
-                  color: hasSickLeaves ? "#FF9AAA" : "text.secondary",
-                  fontWeight: hasSickLeaves ? 800 : 400,
-                  fontSize: hasSickLeaves ? 10 : undefined,
-                  letterSpacing: hasSickLeaves ? ".035em" : 0,
-                  textTransform: hasSickLeaves ? "uppercase" : "none",
-                  lineHeight: 1,
-                  display: hasSickLeaves ? "inline" : "block",
+                  display: "block",
+                  mt: hasSickLeaves ? 0.15 : 0,
+                  color: hasSickLeaves ? alpha("#FF9AAA", 0.92) : "text.secondary",
+                  fontWeight: hasSickLeaves ? 700 : 400,
+                  lineHeight: 1.2,
                 }}
               >
                 na L4
