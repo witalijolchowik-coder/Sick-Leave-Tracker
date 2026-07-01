@@ -101,6 +101,15 @@ const formatImportTime = (value) => {
   }).format(date);
 };
 
+const PROJECT_ACCENTS = ["#7C8CFF", "#22D3A2", "#FF6B86", "#38BDF8", "#F6C85F"];
+
+const eventLabels = {
+  started: "Rozpoczęcie zwolnienia",
+  new: "Nowe zwolnienie",
+  ended: "Zwolnienie zakończone",
+  changed: "Zmiana terminu zwolnienia",
+};
+
 function TrendIndicator({ value, previousRange }) {
   const positive = value > 0;
   const negative = value < 0;
@@ -143,6 +152,7 @@ function SourceCard({ title, description, meta, busy, onFiles }) {
       variant="outlined"
       sx={{
         p: 1.75,
+        height: "100%",
         bgcolor: "rgba(255,255,255,.018)",
         transition: "border-color .18s ease, background-color .18s ease",
         "&:hover": {
@@ -281,14 +291,32 @@ function ProjectCard({ stats, previousRange }) {
     <Paper
       variant="outlined"
       sx={{
-        p: 1.6,
-        minHeight: 142,
+        p: 1.7,
+        minHeight: 156,
+        position: "relative",
+        overflow: "hidden",
         bgcolor: "rgba(255,255,255,.018)",
-        borderColor: "rgba(255,255,255,.075)",
+        borderColor: alpha(stats.accent, 0.58),
+        boxShadow: `inset 0 0 0 1px ${alpha(stats.accent, 0.1)}, 0 10px 28px ${alpha(
+          stats.accent,
+          0.1,
+        )}`,
+        backgroundImage: `linear-gradient(145deg, ${alpha(
+          stats.accent,
+          0.12,
+        )}, transparent 58%)`,
         transition: "transform .18s ease, border-color .18s ease",
+        "&::before": {
+          content: '""',
+          position: "absolute",
+          inset: "0 auto 0 0",
+          width: 3,
+          bgcolor: stats.accent,
+          boxShadow: `0 0 18px ${alpha(stats.accent, 0.9)}`,
+        },
         "&:hover": {
           transform: "translateY(-2px)",
-          borderColor: "rgba(124,140,255,.45)",
+          borderColor: alpha(stats.accent, 0.9),
         },
       }}
     >
@@ -298,8 +326,15 @@ function ProjectCard({ stats, previousRange }) {
             <Typography
               variant="body2"
               fontWeight={800}
-              noWrap
-              sx={{ maxWidth: "100%", mb: 1.1 }}
+              sx={{
+                mb: 1.1,
+                minHeight: 38,
+                lineHeight: 1.25,
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
             >
               {stats.project}
             </Typography>
@@ -338,9 +373,114 @@ function ProjectCard({ stats, previousRange }) {
           </Stack>
         </Box>
         <Stack alignItems="flex-end" justifyContent="space-between">
-          <FolderRoundedIcon color="primary" fontSize="small" />
+          <FolderRoundedIcon fontSize="small" sx={{ color: stats.accent }} />
           <TrendIndicator value={stats.trend} previousRange={previousRange} />
         </Stack>
+      </Stack>
+    </Paper>
+  );
+}
+
+function NewsFeed({ events, projectStats }) {
+  const projectColor = (projectName) =>
+    projectStats.find((stats) => stats.project === projectName)?.accent || "#94A3B8";
+
+  return (
+    <Paper sx={{ p: 1.75, height: { xs: 520, lg: 750 }, overflow: "hidden" }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.25 }}>
+        <Box>
+          <Typography variant="overline" color="primary.light" sx={{ lineHeight: 1 }}>
+            Breaking news
+          </Typography>
+          <Typography variant="h6" sx={{ fontSize: 18, mt: 0.35 }}>
+            Aktualności
+          </Typography>
+        </Box>
+        <Chip size="small" variant="outlined" label={events.length} />
+      </Stack>
+      <Divider />
+      <Stack
+        spacing={1}
+        sx={{
+          mt: 1.25,
+          pr: 0.4,
+          height: "calc(100% - 66px)",
+          overflowY: "auto",
+          scrollbarWidth: "thin",
+        }}
+      >
+        {events.map((event) => {
+          const accent = projectColor(event.projectName);
+          return (
+            <Paper
+              key={event.id}
+              variant="outlined"
+              sx={{
+                p: 1.25,
+                bgcolor: "rgba(255,255,255,.018)",
+                borderLeft: `3px solid ${accent}`,
+                borderColor: alpha(accent, 0.32),
+                borderLeftColor: accent,
+              }}
+            >
+              <Stack direction="row" spacing={1} alignItems="flex-start">
+                <Box
+                  sx={{
+                    width: 9,
+                    height: 9,
+                    mt: 0.55,
+                    flex: "0 0 auto",
+                    borderRadius: "50%",
+                    bgcolor: accent,
+                    boxShadow: `0 0 12px ${alpha(accent, 0.8)}`,
+                  }}
+                />
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" fontWeight={800} noWrap>
+                    {event.employeeName}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    noWrap
+                    sx={{ display: "block", mb: 0.65 }}
+                  >
+                    {event.projectName}
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: accent, fontWeight: 800 }}>
+                    {eventLabels[event.type] || "Zmiana zwolnienia"}
+                  </Typography>
+                  <Typography variant="caption" sx={{ display: "block", mt: 0.25 }}>
+                    {formatDisplayDate(event.start)} – {formatDisplayDate(event.end)}
+                  </Typography>
+                  {event.type === "changed" && event.previousStart && (
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: "block", mt: 0.2 }}
+                    >
+                      Poprzednio: {formatDisplayDate(event.previousStart)} –{" "}
+                      {formatDisplayDate(event.previousEnd)}
+                    </Typography>
+                  )}
+                </Box>
+              </Stack>
+            </Paper>
+          );
+        })}
+        {!events.length && (
+          <Box sx={{ py: 8, px: 2, textAlign: "center" }}>
+            <MonitorHeartRoundedIcon
+              sx={{ fontSize: 34, color: "text.disabled", mb: 1 }}
+            />
+            <Typography variant="body2" fontWeight={800}>
+              Brak nowych wydarzeń
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Zmiany pojawią się po kolejnym imporcie danych ZUS.
+            </Typography>
+          </Box>
+        )}
       </Stack>
     </Paper>
   );
@@ -351,6 +491,7 @@ export function DashboardPage() {
   const defaults = useMemo(monthRange, []);
   const [employees, setEmployees] = useState([]);
   const [sickLeaves, setSickLeaves] = useState([]);
+  const [newsEvents, setNewsEvents] = useState([]);
   const [cloudProjects, setCloudProjects] = useState([]);
   const [cloudState, setCloudState] = useState({});
   const [cloudLoading, setCloudLoading] = useState(true);
@@ -370,6 +511,7 @@ export function DashboardPage() {
         mergeEmployees([...cloud.activeEmployees, ...cloud.archivedEmployees]),
       );
       setSickLeaves(cloud.sickLeaves);
+      setNewsEvents(cloud.newsEvents || []);
       setCloudProjects(cloud.projects);
       setCloudState(cloud.state);
     } catch (error) {
@@ -444,7 +586,7 @@ export function DashboardPage() {
 
   const projectStats = useMemo(
     () =>
-      projects.map((project) => {
+      projects.map((project, index) => {
         const current = currentPeriodRows.filter((row) => row.employee.project === project);
         const previous = previousPeriodRows.filter((row) => row.employee.project === project);
         const sickCount = uniquePeople(current);
@@ -459,6 +601,7 @@ export function DashboardPage() {
           ).length,
           sickCount,
           trend: sickCount - previousCount,
+          accent: PROJECT_ACCENTS[index % PROJECT_ACCENTS.length],
           lastActiveImportAt: cloudProject?.lastActiveImportAt,
           lastArchivedImportAt: cloudProject?.lastArchivedImportAt,
         };
@@ -470,6 +613,10 @@ export function DashboardPage() {
     selectedProject === "all"
       ? projectStats
       : projectStats.filter((stats) => stats.project === selectedProject);
+  const visibleNewsEvents =
+    selectedProject === "all"
+      ? newsEvents
+      : newsEvents.filter((event) => event.projectName === selectedProject);
 
   const currentScopeRows =
     selectedProject === "all"
@@ -563,6 +710,7 @@ export function DashboardPage() {
       await replaceSickLeaves({
         records: merged,
         user,
+        employees,
         sourceFileNames: files.map((file) => file.name),
       });
       setResults([]);
@@ -616,67 +764,6 @@ export function DashboardPage() {
 
   return (
     <Stack spacing={1.6}>
-      <Paper sx={{ p: 1.5 }}>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              md: "minmax(260px,1.5fr) minmax(150px,.7fr) minmax(150px,.7fr) 220px",
-            },
-            gap: 1.25,
-            alignItems: "center",
-          }}
-        >
-          <FormControl size="small" fullWidth>
-            <InputLabel id="project-label">Projekt</InputLabel>
-            <Select
-              labelId="project-label"
-              label="Projekt"
-              value={selectedProject}
-              onChange={(event) => setSelectedProject(event.target.value)}
-              startAdornment={<FolderRoundedIcon sx={{ mr: 1, color: "primary.main" }} />}
-            >
-              <MenuItem value="all">Wszystkie projekty ({projects.length})</MenuItem>
-              {projects.map((project) => (
-                <MenuItem key={project} value={project}>
-                  {project}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <TextField
-            label="Data od"
-            type="date"
-            value={dateRange.start}
-            onChange={(event) => setDateRange({ ...dateRange, start: event.target.value })}
-            slotProps={{ inputLabel: { shrink: true } }}
-          />
-          <TextField
-            label="Data do"
-            type="date"
-            value={dateRange.end}
-            onChange={(event) => setDateRange({ ...dateRange, end: event.target.value })}
-            slotProps={{ inputLabel: { shrink: true } }}
-          />
-          <Button
-            variant="contained"
-            startIcon={
-              busy === "search" ? (
-                <CircularProgress size={17} color="inherit" />
-              ) : (
-                <SearchRoundedIcon />
-              )
-            }
-            onClick={runSearch}
-            disabled={Boolean(busy) || cloudLoading}
-            sx={{ minHeight: 40 }}
-          >
-            Szukaj zwolnień
-          </Button>
-        </Box>
-      </Paper>
-
       {message && (
         <Alert
           severity={message.severity}
@@ -690,8 +777,13 @@ export function DashboardPage() {
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "1.15fr .85fr" },
-          gap: 1.5,
+          gridTemplateColumns: {
+            xs: "1fr",
+            sm: "repeat(2,minmax(0,1fr))",
+            xl: "1.05fr .95fr 1fr 1fr",
+          },
+          gap: 1.25,
+          alignItems: "stretch",
         }}
       >
         <SummaryCard
@@ -711,6 +803,34 @@ export function DashboardPage() {
           icon={<MonitorHeartRoundedIcon fontSize="large" />}
           accent="error"
         />
+        <SourceCard
+          title="Rejestr pracowników"
+          description="Projekty i archiwum"
+          meta={
+            cloudLoading
+              ? "Pobieranie z Firestore…"
+              : employees.length
+                ? `${employees.length} unikalnych osób`
+                : "Brak danych w Firestore"
+          }
+          busy={busy === "employees"}
+          onFiles={uploadEmployees}
+        />
+        <SourceCard
+          title="Zaświadczenia ZUS"
+          description="Najnowsza wersja w chmurze"
+          meta={
+            cloudLoading
+              ? "Pobieranie z Firestore…"
+              : sickLeaves.length
+                ? `${sickLeaves.length} zwolnień • ${formatImportTime(
+                    cloudState.lastSickLeavesImportAt,
+                  )}`
+                : "Brak danych w Firestore"
+          }
+          busy={busy === "leaves"}
+          onFiles={uploadLeaves}
+        />
       </Box>
 
       {visibleProjectStats.length > 0 && (
@@ -719,7 +839,12 @@ export function DashboardPage() {
             display: "grid",
             gridTemplateColumns:
               selectedProject === "all"
-                ? { xs: "1fr", sm: "repeat(2,1fr)", lg: "repeat(5,minmax(0,1fr))" }
+                ? {
+                    xs: "1fr",
+                    sm: "repeat(2,minmax(0,1fr))",
+                    lg: "repeat(3,minmax(0,1fr))",
+                    xl: "repeat(5,minmax(0,1fr))",
+                  }
                 : { xs: "1fr", sm: "minmax(280px,480px)" },
             gap: 1.25,
           }}
@@ -738,49 +863,75 @@ export function DashboardPage() {
           alignItems: "start",
         }}
       >
-        <Paper sx={{ p: 2 }}>
-          <Stack spacing={1.4}>
-            <Box>
-              <Typography variant="overline" color="primary.light" sx={{ lineHeight: 1 }}>
-                Źródła danych
-              </Typography>
-              <Typography variant="h6" sx={{ fontSize: 18, mt: 0.35 }}>
-                Pliki wejściowe
-              </Typography>
-            </Box>
-            <SourceCard
-              title="Rejestr pracowników"
-              description="Projekty i archiwum"
-              meta={
-                cloudLoading
-                  ? "Synchronizacja z Firestore…"
-                  : employees.length
-                  ? `${employees.length} unikalnych osób`
-                  : "Brak danych w Firestore"
-              }
-              busy={busy === "employees"}
-              onFiles={uploadEmployees}
-            />
-            <SourceCard
-              title="Zaświadczenia ZUS"
-              description="Najnowsza wersja w chmurze"
-              meta={
-                cloudLoading
-                  ? "Synchronizacja z Firestore…"
-                  : sickLeaves.length
-                    ? `${sickLeaves.length} zwolnień • ${formatImportTime(
-                        cloudState.lastSickLeavesImportAt,
-                      )}`
-                    : "Brak danych w Firestore"
-              }
-              busy={busy === "leaves"}
-              onFiles={uploadLeaves}
-            />
-          </Stack>
-        </Paper>
+        <NewsFeed events={visibleNewsEvents} projectStats={projectStats} />
 
         <Paper sx={{ p: 2, minWidth: 0 }}>
           <Stack spacing={1.4}>
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: {
+                  xs: "1fr",
+                  md: "minmax(240px,1.35fr) minmax(145px,.65fr) minmax(145px,.65fr) 210px",
+                },
+                gap: 1.2,
+                alignItems: "center",
+              }}
+            >
+              <FormControl size="small" fullWidth>
+                <InputLabel id="project-label">Projekt</InputLabel>
+                <Select
+                  labelId="project-label"
+                  label="Projekt"
+                  value={selectedProject}
+                  onChange={(event) => setSelectedProject(event.target.value)}
+                  startAdornment={<FolderRoundedIcon sx={{ mr: 1, color: "primary.main" }} />}
+                >
+                  <MenuItem value="all">Wszystkie projekty ({projects.length})</MenuItem>
+                  {projects.map((project) => (
+                    <MenuItem key={project} value={project}>
+                      {project}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <TextField
+                size="small"
+                label="Data od"
+                type="date"
+                value={dateRange.start}
+                onChange={(event) =>
+                  setDateRange({ ...dateRange, start: event.target.value })
+                }
+                slotProps={{ inputLabel: { shrink: true } }}
+              />
+              <TextField
+                size="small"
+                label="Data do"
+                type="date"
+                value={dateRange.end}
+                onChange={(event) => setDateRange({ ...dateRange, end: event.target.value })}
+                slotProps={{ inputLabel: { shrink: true } }}
+              />
+              <Button
+                variant="contained"
+                startIcon={
+                  busy === "search" ? (
+                    <CircularProgress size={17} color="inherit" />
+                  ) : (
+                    <SearchRoundedIcon />
+                  )
+                }
+                onClick={runSearch}
+                disabled={Boolean(busy) || cloudLoading}
+                sx={{ minHeight: 40 }}
+              >
+                Szukaj zwolnień
+              </Button>
+            </Box>
+
+            <Divider />
+
             <Stack
               direction={{ xs: "column", sm: "row" }}
               alignItems={{ xs: "stretch", sm: "center" }}

@@ -40,6 +40,7 @@ Firestore Security Rules.
 - `employees` — parsed active employees
 - `employeeArchives` — parsed archived employees
 - `sickLeaves/{version}/chunks` — the current parsed ZUS dataset in compact chunks
+- `newsEvents` — derived sick-leave changes shown in the Aktualności feed
 - `appState/current` — pointer to the active sick-leave dataset
 - `imports` — import history, timestamps, user and record counts
 

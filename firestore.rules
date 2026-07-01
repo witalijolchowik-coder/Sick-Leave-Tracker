@@ -30,6 +30,10 @@ service cloud.firestore {
       allow read, write: if signedIn();
     }
 
+    match /newsEvents/{eventId} {
+      allow read, write: if signedIn();
+    }
+
     match /appState/{documentId} {
       allow read, write: if signedIn();
     }

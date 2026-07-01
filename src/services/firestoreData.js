@@ -3,7 +3,9 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -103,6 +105,98 @@ const sickLeavePayload = (record) => ({
   companies: record.companies || [],
 });
 
+const loadSickLeaveDataset = async (version) => {
+  if (!version) return [];
+  const chunkSnapshot = await getDocs(
+    collection(db, "sickLeaves", version, "chunks"),
+  );
+  return chunkSnapshot.docs
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .flatMap((snapshotDoc) => snapshotDoc.data().records || []);
+};
+
+const leaveKey = (record) =>
+  record.certificate
+    ? `${record.id}::${record.certificate}`
+    : `${record.id}::${record.start}`;
+
+const employeeLookup = (employees) => {
+  const lookup = new Map();
+  employees.forEach((employee) => {
+    (employee.aliases?.length ? employee.aliases : [employee.id]).forEach((alias) =>
+      lookup.set(alias, employee),
+    );
+  });
+  return lookup;
+};
+
+const buildSickLeaveEvents = ({
+  previousRecords,
+  nextRecords,
+  employees,
+  version,
+}) => {
+  if (!previousRecords.length) return [];
+  const employeesById = employeeLookup(employees);
+  const previousByKey = new Map(
+    previousRecords.map((record) => [leaveKey(record), record]),
+  );
+  const nextByKey = new Map(nextRecords.map((record) => [leaveKey(record), record]));
+  const events = [];
+
+  const createEvent = (type, record, previousRecord = null) => {
+    const employee = employeesById.get(record.id);
+    if (!employee) return;
+    const activeOnImport =
+      record.start <= toLocalIsoDate(new Date()) &&
+      record.end >= toLocalIsoDate(new Date());
+    events.push({
+      type: type === "new" && activeOnImport ? "started" : type,
+      employeeId: record.id,
+      employeeName: employee.fullName || record.sourceName || record.id,
+      projectId: createProjectId(employee.project),
+      projectName: employee.project,
+      start: record.start,
+      end: record.end,
+      previousStart: previousRecord?.start || "",
+      previousEnd: previousRecord?.end || "",
+      certificate: record.certificate || "",
+      version,
+      createdAt: serverTimestamp(),
+    });
+  };
+
+  nextByKey.forEach((record, key) => {
+    const previous = previousByKey.get(key);
+    if (!previous) {
+      createEvent("new", record);
+    } else if (previous.start !== record.start || previous.end !== record.end) {
+      createEvent("changed", record, previous);
+    }
+  });
+
+  previousByKey.forEach((record, key) => {
+    if (!nextByKey.has(key)) createEvent("ended", record);
+  });
+
+  return events
+    .sort((left, right) => right.start.localeCompare(left.start))
+    .slice(0, 300);
+};
+
+const toLocalIsoDate = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`;
+
+const cleanupNewsEvents = async () => {
+  const snapshot = await getDocs(
+    query(collection(db, "newsEvents"), orderBy("createdAt", "desc")),
+  );
+  const stale = snapshot.docs.slice(300).map((snapshotDoc) => snapshotDoc.ref);
+  if (stale.length) await commitDeletes(stale);
+};
+
 const cleanupProjectVersion = async (collectionName, projectId, currentVersion) => {
   const snapshot = await getDocs(
     query(collection(db, collectionName), where("projectId", "==", projectId)),
@@ -201,12 +295,20 @@ const deleteSickLeaveDataset = async (version) => {
 export async function replaceSickLeaves({
   records,
   user,
+  employees = [],
   sourceFileNames = [],
 }) {
   const version = newVersion();
   const stateSnapshot = await getDoc(STATE_DOCUMENT);
   const previousVersion = stateSnapshot.data()?.sickLeavesVersion || "";
+  const previousRecords = await loadSickLeaveDataset(previousVersion);
   const recordChunks = chunks(records.map(sickLeavePayload), SICK_LEAVE_CHUNK_SIZE);
+  const events = buildSickLeaveEvents({
+    previousRecords,
+    nextRecords: records,
+    employees,
+    version,
+  });
 
   await commitSets(
     recordChunks.map((chunkRecords, index) => ({
@@ -224,6 +326,19 @@ export async function replaceSickLeaves({
       },
     })),
   );
+
+  if (events.length) {
+    await commitSets(
+      events.map((event, index) => ({
+        reference: doc(
+          db,
+          "newsEvents",
+          `${version}__${String(index).padStart(4, "0")}`,
+        ),
+        data: event,
+      })),
+    );
+  }
 
   const importReference = doc(collection(db, "imports"));
   const batch = writeBatch(db);
@@ -258,6 +373,14 @@ export async function replaceSickLeaves({
   });
   await batch.commit();
 
+  if (events.length) {
+    try {
+      await cleanupNewsEvents();
+    } catch (error) {
+      console.warn("News events cleanup failed:", error);
+    }
+  }
+
   if (previousVersion && previousVersion !== version) {
     try {
       await deleteSickLeaveDataset(previousVersion);
@@ -282,12 +405,21 @@ const restoreEmployee = (data, archived) => ({
 });
 
 export async function loadCloudData() {
-  const [projectsSnapshot, employeesSnapshot, archivesSnapshot, stateSnapshot] =
+  const [
+    projectsSnapshot,
+    employeesSnapshot,
+    archivesSnapshot,
+    stateSnapshot,
+    newsSnapshot,
+  ] =
     await Promise.all([
       getDocs(collection(db, "projects")),
       getDocs(collection(db, "employees")),
       getDocs(collection(db, "employeeArchives")),
       getDoc(STATE_DOCUMENT),
+      getDocs(
+        query(collection(db, "newsEvents"), orderBy("createdAt", "desc"), limit(100)),
+      ),
     ]);
 
   const projects = projectsSnapshot.docs.map((snapshotDoc) => ({
@@ -314,12 +446,7 @@ export async function loadCloudData() {
   const state = stateSnapshot.exists() ? stateSnapshot.data() : {};
   let sickLeaves = [];
   if (state.sickLeavesVersion) {
-    const chunkSnapshot = await getDocs(
-      collection(db, "sickLeaves", state.sickLeavesVersion, "chunks"),
-    );
-    sickLeaves = chunkSnapshot.docs
-      .sort((left, right) => left.id.localeCompare(right.id))
-      .flatMap((snapshotDoc) => snapshotDoc.data().records || []);
+    sickLeaves = await loadSickLeaveDataset(state.sickLeavesVersion);
   }
 
   return {
@@ -327,6 +454,10 @@ export async function loadCloudData() {
     archivedEmployees,
     projects,
     sickLeaves,
+    newsEvents: newsSnapshot.docs.map((snapshotDoc) => ({
+      id: snapshotDoc.id,
+      ...snapshotDoc.data(),
+    })),
     state,
   };
 }
