@@ -37,7 +37,8 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
 import {
   exportAbsenceReport,
   exportToyotaReport,
@@ -48,8 +49,12 @@ import {
   parseSickLeaveFile,
   searchSickLeaves,
 } from "../lib/data";
-
-const STORAGE_KEY = "sickleave-pro-dashboard-v1";
+import {
+  loadCloudData,
+  replaceProjectEmployees,
+  replaceSickLeaves,
+  subscribeToCloudChanges,
+} from "../services/firestoreData";
 
 const toIsoDate = (date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
@@ -83,12 +88,17 @@ const previousPeriod = ({ start, end }) => {
 
 const uniquePeople = (rows) => new Set(rows.map((row) => row.id)).size;
 
-const loadStored = () => {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-  } catch {
-    return {};
-  }
+const formatImportTime = (value) => {
+  if (!value) return "brak importu";
+  const date = typeof value.toDate === "function" ? value.toDate() : new Date(value);
+  if (Number.isNaN(date.getTime())) return "brak importu";
+  return new Intl.DateTimeFormat("pl-PL", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 };
 
 function TrendIndicator({ value, previousRange }) {
@@ -272,7 +282,7 @@ function ProjectCard({ stats, previousRange }) {
       variant="outlined"
       sx={{
         p: 1.6,
-        minHeight: 110,
+        minHeight: 142,
         bgcolor: "rgba(255,255,255,.018)",
         borderColor: "rgba(255,255,255,.075)",
         transition: "transform .18s ease, border-color .18s ease",
@@ -294,7 +304,7 @@ function ProjectCard({ stats, previousRange }) {
               {stats.project}
             </Typography>
           </Tooltip>
-          <Stack direction="row" spacing={2.2}>
+          <Stack direction="row" spacing={2.2} sx={{ mb: 1.15 }}>
             <Box>
               <Typography variant="h6" sx={{ lineHeight: 1 }}>
                 {stats.employeeCount}
@@ -312,6 +322,20 @@ function ProjectCard({ stats, previousRange }) {
               </Typography>
             </Box>
           </Stack>
+          <Stack spacing={0.2}>
+            <Typography variant="caption" color="text.secondary" noWrap>
+              Lista:{" "}
+              <Box component="span" sx={{ color: "text.primary" }}>
+                {formatImportTime(stats.lastActiveImportAt)}
+              </Box>
+            </Typography>
+            <Typography variant="caption" color="text.secondary" noWrap>
+              Archiwum:{" "}
+              <Box component="span" sx={{ color: "text.primary" }}>
+                {formatImportTime(stats.lastArchivedImportAt)}
+              </Box>
+            </Typography>
+          </Stack>
         </Box>
         <Stack alignItems="flex-end" justifyContent="space-between">
           <FolderRoundedIcon color="primary" fontSize="small" />
@@ -323,42 +347,73 @@ function ProjectCard({ stats, previousRange }) {
 }
 
 export function DashboardPage() {
-  const stored = useMemo(loadStored, []);
+  const { user } = useAuth();
   const defaults = useMemo(monthRange, []);
-  const [employees, setEmployees] = useState(stored.employees || []);
-  const [sickLeaves, setSickLeaves] = useState(stored.sickLeaves || []);
+  const [employees, setEmployees] = useState([]);
+  const [sickLeaves, setSickLeaves] = useState([]);
+  const [cloudProjects, setCloudProjects] = useState([]);
+  const [cloudState, setCloudState] = useState({});
+  const [cloudLoading, setCloudLoading] = useState(true);
   const [selectedProject, setSelectedProject] = useState("all");
-  const [dateRange, setDateRange] = useState(stored.dateRange || defaults);
+  const [dateRange, setDateRange] = useState(defaults);
   const [results, setResults] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [hours, setHours] = useState(8);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState(null);
 
-  const persist = (nextEmployees, nextLeaves, nextDates = dateRange) => {
+  const refreshCloudData = useCallback(async (silent = false) => {
+    if (!silent) setCloudLoading(true);
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          employees: nextEmployees,
-          sickLeaves: nextLeaves,
-          dateRange: nextDates,
-        }),
+      const cloud = await loadCloudData();
+      setEmployees(
+        mergeEmployees([...cloud.activeEmployees, ...cloud.archivedEmployees]),
       );
-    } catch {
+      setSickLeaves(cloud.sickLeaves);
+      setCloudProjects(cloud.projects);
+      setCloudState(cloud.state);
+    } catch (error) {
       setMessage({
-        severity: "warning",
-        text: "Dane działają, ale nie zmieściły się w pamięci przeglądarki.",
+        severity: "error",
+        text:
+          error.code === "permission-denied"
+            ? "Brak dostępu do Firestore. Sprawdź reguły bezpieczeństwa bazy."
+            : `Nie udało się pobrać danych z Firestore: ${error.message}`,
       });
+    } finally {
+      if (!silent) setCloudLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    let timer;
+    refreshCloudData();
+    const unsubscribe = subscribeToCloudChanges(
+      () => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => refreshCloudData(true), 250);
+      },
+      (error) =>
+        setMessage({
+          severity: "error",
+          text: `Synchronizacja Firestore została przerwana: ${error.message}`,
+        }),
+    );
+    return () => {
+      window.clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [refreshCloudData]);
 
   const projects = useMemo(
     () =>
-      [...new Set(employees.map((employee) => employee.project))].sort((a, b) =>
-        a.localeCompare(b, "pl"),
-      ),
-    [employees],
+      [
+        ...new Set([
+          ...cloudProjects.map((project) => project.projectName),
+          ...employees.map((employee) => employee.project),
+        ]),
+      ].sort((a, b) => a.localeCompare(b, "pl")),
+    [cloudProjects, employees],
   );
 
   const previousRange = useMemo(() => previousPeriod(dateRange), [dateRange]);
@@ -394,6 +449,9 @@ export function DashboardPage() {
         const previous = previousPeriodRows.filter((row) => row.employee.project === project);
         const sickCount = uniquePeople(current);
         const previousCount = uniquePeople(previous);
+        const cloudProject = cloudProjects.find(
+          (candidate) => candidate.projectName === project,
+        );
         return {
           project,
           employeeCount: employees.filter(
@@ -401,9 +459,11 @@ export function DashboardPage() {
           ).length,
           sickCount,
           trend: sickCount - previousCount,
+          lastActiveImportAt: cloudProject?.lastActiveImportAt,
+          lastArchivedImportAt: cloudProject?.lastArchivedImportAt,
         };
       }),
-    [projects, currentPeriodRows, previousPeriodRows, employees],
+    [projects, currentPeriodRows, previousPeriodRows, employees, cloudProjects],
   );
 
   const visibleProjectStats =
@@ -438,18 +498,56 @@ export function DashboardPage() {
     setBusy("employees");
     setMessage(null);
     try {
-      const parsed = (await Promise.all(files.map(parseEmployeeFile))).flat();
-      const merged = mergeEmployees(parsed);
-      if (!merged.length) throw new Error("Nie znaleziono pracowników w wybranych plikach.");
-      setEmployees(merged);
+      const parsedFiles = await Promise.all(
+        files.map(async (file) => ({
+          file,
+          records: await parseEmployeeFile(file),
+        })),
+      );
+      const importGroups = new Map();
+      parsedFiles.forEach(({ file, records }) => {
+        records.forEach((record) => {
+          const key = `${record.archived ? "archive" : "active"}::${record.project}`;
+          if (!importGroups.has(key)) {
+            importGroups.set(key, {
+              projectName: record.project,
+              archived: record.archived,
+              records: [],
+              sourceFiles: new Set(),
+            });
+          }
+          const group = importGroups.get(key);
+          group.records.push(record);
+          group.sourceFiles.add(file.name);
+        });
+      });
+      if (!importGroups.size) {
+        throw new Error("Nie znaleziono pracowników w wybranych plikach.");
+      }
+
+      let importedCount = 0;
+      for (const group of importGroups.values()) {
+        const imported = await replaceProjectEmployees({
+          projectName: group.projectName,
+          archived: group.archived,
+          records: mergeEmployees(group.records),
+          user,
+          sourceFileName: [...group.sourceFiles].join(", "),
+        });
+        importedCount += imported.recordCount;
+      }
+
       setResults([]);
-      persist(merged, sickLeaves);
+      await refreshCloudData();
       setMessage({
         severity: "success",
-        text: `Wczytano ${merged.length} unikalnych pracowników.`,
+        text: `Zapisano w Firestore ${importedCount} pracowników w ${importGroups.size} aktualizacjach projektów.`,
       });
     } catch (error) {
-      setMessage({ severity: "error", text: error.message });
+      setMessage({
+        severity: "error",
+        text: `Import pracowników nie powiódł się: ${error.message}`,
+      });
     } finally {
       setBusy("");
     }
@@ -462,15 +560,22 @@ export function DashboardPage() {
       const parsed = (await Promise.all(files.map(parseSickLeaveFile))).flat();
       const merged = mergeSickLeaves(parsed);
       if (!merged.length) throw new Error("Nie znaleziono prawidłowych zwolnień ZUS.");
-      setSickLeaves(merged);
+      await replaceSickLeaves({
+        records: merged,
+        user,
+        sourceFileNames: files.map((file) => file.name),
+      });
       setResults([]);
-      persist(employees, merged);
+      await refreshCloudData();
       setMessage({
         severity: "success",
-        text: `Wczytano ${merged.length} zwolnień.`,
+        text: `Zapisano w Firestore ${merged.length} zwolnień.`,
       });
     } catch (error) {
-      setMessage({ severity: "error", text: error.message });
+      setMessage({
+        severity: "error",
+        text: `Import zwolnień nie powiódł się: ${error.message}`,
+      });
     } finally {
       setBusy("");
     }
@@ -496,7 +601,6 @@ export function DashboardPage() {
       });
       setResults(found);
       setSelectedIds(new Set(found.map((row) => row.resultId)));
-      persist(employees, sickLeaves, dateRange);
       setMessage({
         severity: found.length ? "success" : "info",
         text: found.length
@@ -565,7 +669,7 @@ export function DashboardPage() {
               )
             }
             onClick={runSearch}
-            disabled={Boolean(busy)}
+            disabled={Boolean(busy) || cloudLoading}
             sx={{ minHeight: 40 }}
           >
             Szukaj zwolnień
@@ -648,20 +752,26 @@ export function DashboardPage() {
               title="Rejestr pracowników"
               description="Projekty i archiwum"
               meta={
-                employees.length
+                cloudLoading
+                  ? "Synchronizacja z Firestore…"
+                  : employees.length
                   ? `${employees.length} unikalnych osób`
-                  : "Wybierz wszystkie pliki XLS"
+                  : "Brak danych w Firestore"
               }
               busy={busy === "employees"}
               onFiles={uploadEmployees}
             />
             <SourceCard
               title="Zaświadczenia ZUS"
-              description="Wszystkie zakładki pliku"
+              description="Najnowsza wersja w chmurze"
               meta={
-                sickLeaves.length
-                  ? `${sickLeaves.length} unikalnych zwolnień`
-                  : "Wybierz aktualny plik XLS"
+                cloudLoading
+                  ? "Synchronizacja z Firestore…"
+                  : sickLeaves.length
+                    ? `${sickLeaves.length} zwolnień • ${formatImportTime(
+                        cloudState.lastSickLeavesImportAt,
+                      )}`
+                    : "Brak danych w Firestore"
               }
               busy={busy === "leaves"}
               onFiles={uploadLeaves}
