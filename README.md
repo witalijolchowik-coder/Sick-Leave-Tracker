@@ -15,8 +15,8 @@ sick-leave certificates.
 ## Local development
 
 ```bash
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
 ## Firebase setup
