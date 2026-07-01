@@ -353,46 +353,47 @@ function ProjectCard({ stats, previousRange }) {
             <Box
               aria-label={`${stats.sickCount} pracowników na L4`}
               sx={{
-                minWidth: 76,
-                px: hasSickLeaves ? 1 : 0,
-                py: hasSickLeaves ? 0.55 : 0,
-                mt: hasSickLeaves ? -0.55 : 0,
-                mb: hasSickLeaves ? -0.4 : 0,
-                borderRadius: 2,
+                minWidth: hasSickLeaves ? 86 : 48,
+                height: hasSickLeaves ? 34 : "auto",
+                px: hasSickLeaves ? 0.9 : 0,
+                borderRadius: 999,
                 color: hasSickLeaves ? "#FF7188" : "text.primary",
-                bgcolor: hasSickLeaves ? alpha("#FF5F78", 0.12) : "transparent",
+                bgcolor: hasSickLeaves ? alpha("#FF5F78", 0.09) : "transparent",
                 border: "1px solid",
-                borderColor: hasSickLeaves ? alpha("#FF5F78", 0.38) : "transparent",
+                borderColor: hasSickLeaves ? alpha("#FF5F78", 0.34) : "transparent",
                 boxShadow: hasSickLeaves
-                  ? `0 0 22px ${alpha("#FF5F78", 0.16)}, inset 0 0 12px ${alpha(
-                      "#FF5F78",
-                      0.05,
-                    )}`
+                  ? `0 0 16px ${alpha("#FF5F78", 0.1)}`
                   : "none",
+                display: hasSickLeaves ? "flex" : "block",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: hasSickLeaves ? 0.45 : 0,
+                whiteSpace: "nowrap",
               }}
             >
-              <Stack direction="row" spacing={0.55} alignItems="center">
-                {hasSickLeaves && (
-                  <MonitorHeartRoundedIcon sx={{ fontSize: 18, color: "#FF5F78" }} />
-                )}
-                <Typography
-                  variant={hasSickLeaves ? "h5" : "h6"}
-                  sx={{
-                    lineHeight: 1,
-                    fontSize: hasSickLeaves ? 24 : undefined,
-                    color: "inherit",
-                  }}
-                >
-                  {stats.sickCount}
-                </Typography>
-              </Stack>
+              {hasSickLeaves && (
+                <MonitorHeartRoundedIcon sx={{ fontSize: 16, color: "#FF5F78" }} />
+              )}
+              <Typography
+                variant="h6"
+                sx={{
+                  lineHeight: 1,
+                  fontSize: hasSickLeaves ? 19 : undefined,
+                  color: "inherit",
+                }}
+              >
+                {stats.sickCount}
+              </Typography>
               <Typography
                 variant="caption"
                 sx={{
                   color: hasSickLeaves ? "#FF9AAA" : "text.secondary",
                   fontWeight: hasSickLeaves ? 800 : 400,
-                  letterSpacing: hasSickLeaves ? ".05em" : 0,
+                  fontSize: hasSickLeaves ? 10 : undefined,
+                  letterSpacing: hasSickLeaves ? ".035em" : 0,
                   textTransform: hasSickLeaves ? "uppercase" : "none",
+                  lineHeight: 1,
+                  display: hasSickLeaves ? "inline" : "block",
                 }}
               >
                 na L4
