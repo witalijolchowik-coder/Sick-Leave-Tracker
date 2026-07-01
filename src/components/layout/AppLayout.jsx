@@ -1,3 +1,4 @@
+import CloudDoneRoundedIcon from "@mui/icons-material/CloudDoneRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import ShieldRoundedIcon from "@mui/icons-material/ShieldRounded";
 import {
@@ -8,6 +9,7 @@ import {
   Chip,
   Container,
   Toolbar,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { Outlet } from "react-router-dom";
@@ -28,7 +30,7 @@ export function AppLayout() {
           borderBottom: "1px solid rgba(255,255,255,.07)",
         }}
       >
-        <Toolbar sx={{ minHeight: 72 }}>
+        <Toolbar sx={{ minHeight: 64 }}>
           <Container
             maxWidth="xl"
             disableGutters
@@ -49,6 +51,20 @@ export function AppLayout() {
                 PRO
               </Box>
             </Typography>
+            <Tooltip title="Firebase Authentication i Firestore są skonfigurowane">
+              <Chip
+                size="small"
+                color="success"
+                variant="outlined"
+                icon={<CloudDoneRoundedIcon />}
+                label="Firebase"
+                sx={{
+                  height: 25,
+                  display: { xs: "none", md: "flex" },
+                  "& .MuiChip-label": { px: 0.8, fontSize: 11 },
+                }}
+              />
+            </Tooltip>
             <Chip
               size="small"
               color="success"
@@ -67,7 +83,7 @@ export function AppLayout() {
           </Container>
         </Toolbar>
       </AppBar>
-      <Container maxWidth="xl" sx={{ py: { xs: 3, md: 4 } }}>
+      <Container maxWidth="xl" sx={{ py: { xs: 2, md: 2.25 } }}>
         <Outlet />
       </Container>
     </Box>

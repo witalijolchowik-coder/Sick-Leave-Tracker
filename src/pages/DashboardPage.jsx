@@ -1,11 +1,12 @@
-import ArchiveRoundedIcon from "@mui/icons-material/ArchiveRounded";
+import ArrowDownwardRoundedIcon from "@mui/icons-material/ArrowDownwardRounded";
+import ArrowUpwardRoundedIcon from "@mui/icons-material/ArrowUpwardRounded";
 import CheckBoxOutlineBlankRoundedIcon from "@mui/icons-material/CheckBoxOutlineBlankRounded";
 import CheckBoxRoundedIcon from "@mui/icons-material/CheckBoxRounded";
-import CloudDoneRoundedIcon from "@mui/icons-material/CloudDoneRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import FileUploadRoundedIcon from "@mui/icons-material/FileUploadRounded";
 import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
 import GroupsRoundedIcon from "@mui/icons-material/GroupsRounded";
+import HorizontalRuleRoundedIcon from "@mui/icons-material/HorizontalRuleRounded";
 import MonitorHeartRoundedIcon from "@mui/icons-material/MonitorHeartRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import TableViewRoundedIcon from "@mui/icons-material/TableViewRounded";
@@ -50,17 +51,37 @@ import {
 
 const STORAGE_KEY = "sickleave-pro-dashboard-v1";
 
+const toIsoDate = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`;
+
 const monthRange = () => {
   const now = new Date();
-  const toIso = (date) =>
-    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-      date.getDate(),
-    ).padStart(2, "0")}`;
   return {
-    start: toIso(new Date(now.getFullYear(), now.getMonth(), 1)),
-    end: toIso(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+    start: toIsoDate(new Date(now.getFullYear(), now.getMonth(), 1)),
+    end: toIsoDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
   };
 };
+
+const previousPeriod = ({ start, end }) => {
+  const startDate = new Date(`${start}T00:00:00`);
+  const endDate = new Date(`${end}T00:00:00`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return { start: "", end: "" };
+  }
+  const days = Math.max(
+    1,
+    Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1,
+  );
+  const previousEnd = new Date(startDate);
+  previousEnd.setDate(previousEnd.getDate() - 1);
+  const previousStart = new Date(previousEnd);
+  previousStart.setDate(previousStart.getDate() - days + 1);
+  return { start: toIsoDate(previousStart), end: toIsoDate(previousEnd) };
+};
+
+const uniquePeople = (rows) => new Set(rows.map((row) => row.id)).size;
 
 const loadStored = () => {
   try {
@@ -70,33 +91,85 @@ const loadStored = () => {
   }
 };
 
-function SourceCard({ title, description, meta, multiple, busy, onFiles }) {
+function TrendIndicator({ value, previousRange }) {
+  const positive = value > 0;
+  const negative = value < 0;
+  const color = positive ? "error.main" : negative ? "secondary.main" : "text.disabled";
+  const Icon = positive
+    ? ArrowUpwardRoundedIcon
+    : negative
+      ? ArrowDownwardRoundedIcon
+      : HorizontalRuleRoundedIcon;
+
+  return (
+    <Tooltip
+      title={`Względem okresu ${formatDisplayDate(previousRange.start)} – ${formatDisplayDate(
+        previousRange.end,
+      )}`}
+    >
+      <Chip
+        size="small"
+        icon={<Icon sx={{ fontSize: "15px !important" }} />}
+        label={value > 0 ? `+${value}` : String(value)}
+        sx={{
+          height: 24,
+          color,
+          bgcolor: (theme) => alpha(theme.palette[color.split(".")[0]]?.main || "#94a3b8", 0.1),
+          border: "1px solid",
+          borderColor: (theme) => alpha(theme.palette[color.split(".")[0]]?.main || "#94a3b8", 0.2),
+          "& .MuiChip-icon": { color },
+          "& .MuiChip-label": { px: 0.75, fontWeight: 800, fontSize: 11 },
+        }}
+      />
+    </Tooltip>
+  );
+}
+
+function SourceCard({ title, description, meta, busy, onFiles }) {
   const inputRef = useRef(null);
 
   return (
-    <Paper variant="outlined" sx={{ p: 2.25, bgcolor: "rgba(255,255,255,.02)" }}>
-      <Stack direction="row" spacing={1.5} alignItems="center">
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 1.75,
+        bgcolor: "rgba(255,255,255,.018)",
+        transition: "border-color .18s ease, background-color .18s ease",
+        "&:hover": {
+          borderColor: "rgba(124,140,255,.42)",
+          bgcolor: "rgba(124,140,255,.035)",
+        },
+      }}
+    >
+      <Stack direction="row" spacing={1.25} alignItems="center">
         <Box
           sx={{
-            width: 44,
-            height: 44,
+            width: 40,
+            height: 40,
             flex: "0 0 auto",
             display: "grid",
             placeItems: "center",
-            borderRadius: 2.5,
+            borderRadius: 2.25,
             color: "primary.main",
             bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
           }}
         >
-          {busy ? <CircularProgress size={22} /> : <FileUploadRoundedIcon />}
+          {busy ? <CircularProgress size={20} /> : <FileUploadRoundedIcon fontSize="small" />}
         </Box>
         <Box sx={{ minWidth: 0, flexGrow: 1 }}>
-          <Typography fontWeight={750}>{title}</Typography>
+          <Typography variant="body2" fontWeight={800}>
+            {title}
+          </Typography>
           <Typography variant="caption" color="text.secondary">
             {description}
           </Typography>
         </Box>
-        <Button variant="outlined" onClick={() => inputRef.current?.click()} disabled={busy}>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+        >
           Wybierz
         </Button>
       </Stack>
@@ -105,9 +178,9 @@ function SourceCard({ title, description, meta, multiple, busy, onFiles }) {
         color="text.secondary"
         sx={{
           display: "block",
-          mt: 1.5,
-          pt: 1.5,
-          borderTop: "1px solid rgba(255,255,255,.06)",
+          mt: 1.25,
+          pt: 1.1,
+          borderTop: "1px solid rgba(255,255,255,.055)",
         }}
       >
         {meta}
@@ -117,7 +190,7 @@ function SourceCard({ title, description, meta, multiple, busy, onFiles }) {
         hidden
         type="file"
         accept=".xls,.xlsx"
-        multiple={multiple}
+        multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
           if (files.length) onFiles(files);
@@ -128,19 +201,122 @@ function SourceCard({ title, description, meta, multiple, busy, onFiles }) {
   );
 }
 
-function StatCard({ icon, label, value, color = "primary.main" }) {
+function SummaryCard({
+  title,
+  value,
+  helper,
+  sickCount,
+  trend,
+  previousRange,
+  icon,
+  accent = "primary",
+}) {
   return (
-    <Paper sx={{ p: 2.25, minHeight: 116 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-        <Box>
-          <Typography variant="overline" color="text.secondary">
-            {label}
+    <Paper
+      sx={{
+        p: 2,
+        minHeight: 104,
+        overflow: "hidden",
+        position: "relative",
+        bgcolor: "rgba(23,28,42,.88)",
+        boxShadow: "0 14px 34px rgba(0,0,0,.2)",
+        "&::after": {
+          content: '""',
+          position: "absolute",
+          inset: "auto -34px -48px auto",
+          width: 120,
+          height: 120,
+          borderRadius: "50%",
+          bgcolor: (theme) => alpha(theme.palette[accent].main, 0.08),
+        },
+      }}
+    >
+      <Stack direction="row" justifyContent="space-between" spacing={2}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{ lineHeight: 1.1, letterSpacing: ".11em" }}
+          >
+            {title}
           </Typography>
-          <Typography variant="h4" sx={{ mt: 0.5 }}>
-            {value}
-          </Typography>
+          <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mt: 0.4 }}>
+            <Typography variant="h4" sx={{ fontSize: 30 }}>
+              {value}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {helper}
+            </Typography>
+          </Stack>
+          {typeof sickCount === "number" && (
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 0.65 }}>
+              <Typography variant="caption" color="text.secondary">
+                Na L4:{" "}
+                <Box component="span" sx={{ color: "text.primary", fontWeight: 800 }}>
+                  {sickCount}
+                </Box>
+              </Typography>
+              <TrendIndicator value={trend} previousRange={previousRange} />
+            </Stack>
+          )}
         </Box>
-        <Box sx={{ color, mt: 0.5 }}>{icon}</Box>
+        <Box sx={{ color: `${accent}.main`, zIndex: 1 }}>{icon}</Box>
+      </Stack>
+    </Paper>
+  );
+}
+
+function ProjectCard({ stats, previousRange }) {
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 1.6,
+        minHeight: 110,
+        bgcolor: "rgba(255,255,255,.018)",
+        borderColor: "rgba(255,255,255,.075)",
+        transition: "transform .18s ease, border-color .18s ease",
+        "&:hover": {
+          transform: "translateY(-2px)",
+          borderColor: "rgba(124,140,255,.45)",
+        },
+      }}
+    >
+      <Stack direction="row" justifyContent="space-between" spacing={1.25} height="100%">
+        <Box sx={{ minWidth: 0 }}>
+          <Tooltip title={stats.project}>
+            <Typography
+              variant="body2"
+              fontWeight={800}
+              noWrap
+              sx={{ maxWidth: "100%", mb: 1.1 }}
+            >
+              {stats.project}
+            </Typography>
+          </Tooltip>
+          <Stack direction="row" spacing={2.2}>
+            <Box>
+              <Typography variant="h6" sx={{ lineHeight: 1 }}>
+                {stats.employeeCount}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                pracowników
+              </Typography>
+            </Box>
+            <Box>
+              <Typography variant="h6" sx={{ lineHeight: 1 }}>
+                {stats.sickCount}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                na L4
+              </Typography>
+            </Box>
+          </Stack>
+        </Box>
+        <Stack alignItems="flex-end" justifyContent="space-between">
+          <FolderRoundedIcon color="primary" fontSize="small" />
+          <TrendIndicator value={stats.trend} previousRange={previousRange} />
+        </Stack>
       </Stack>
     </Paper>
   );
@@ -184,17 +360,79 @@ export function DashboardPage() {
       ),
     [employees],
   );
-  const filteredEmployees =
+
+  const previousRange = useMemo(() => previousPeriod(dateRange), [dateRange]);
+
+  const currentPeriodRows = useMemo(
+    () =>
+      searchSickLeaves({
+        employees,
+        sickLeaves,
+        project: "all",
+        dateStart: dateRange.start,
+        dateEnd: dateRange.end,
+      }),
+    [employees, sickLeaves, dateRange],
+  );
+
+  const previousPeriodRows = useMemo(
+    () =>
+      searchSickLeaves({
+        employees,
+        sickLeaves,
+        project: "all",
+        dateStart: previousRange.start,
+        dateEnd: previousRange.end,
+      }),
+    [employees, sickLeaves, previousRange],
+  );
+
+  const projectStats = useMemo(
+    () =>
+      projects.map((project) => {
+        const current = currentPeriodRows.filter((row) => row.employee.project === project);
+        const previous = previousPeriodRows.filter((row) => row.employee.project === project);
+        const sickCount = uniquePeople(current);
+        const previousCount = uniquePeople(previous);
+        return {
+          project,
+          employeeCount: employees.filter(
+            (employee) => !employee.archived && employee.project === project,
+          ).length,
+          sickCount,
+          trend: sickCount - previousCount,
+        };
+      }),
+    [projects, currentPeriodRows, previousPeriodRows, employees],
+  );
+
+  const visibleProjectStats =
     selectedProject === "all"
-      ? employees
-      : employees.filter((employee) => employee.project === selectedProject);
-  const activeCount = filteredEmployees.filter((employee) => !employee.archived).length;
-  const archivedCount = filteredEmployees.length - activeCount;
+      ? projectStats
+      : projectStats.filter((stats) => stats.project === selectedProject);
+
+  const currentScopeRows =
+    selectedProject === "all"
+      ? currentPeriodRows
+      : currentPeriodRows.filter((row) => row.employee.project === selectedProject);
+  const previousScopeRows =
+    selectedProject === "all"
+      ? previousPeriodRows
+      : previousPeriodRows.filter((row) => row.employee.project === selectedProject);
+  const scopeEmployeeCount = employees.filter(
+    (employee) =>
+      !employee.archived &&
+      (selectedProject === "all" || employee.project === selectedProject),
+  ).length;
+  const scopeSickCount = uniquePeople(currentScopeRows);
+  const scopeTrend = scopeSickCount - uniquePeople(previousScopeRows);
+
   const selectedRows = results.filter((row) => selectedIds.has(row.resultId));
   const toyotaRows = selectedRows.filter((row) => {
     const project = row.employee.project.toUpperCase();
     return project.includes("TOYOTA") || project.includes("TBPL");
   });
+  const resultPeopleCount = uniquePeople(results);
 
   const uploadEmployees = async (files) => {
     setBusy("employees");
@@ -262,9 +500,7 @@ export function DashboardPage() {
       setMessage({
         severity: found.length ? "success" : "info",
         text: found.length
-          ? `Znaleziono ${found.length} zwolnień dla ${
-              new Set(found.map((row) => row.id)).size
-            } pracowników.`
+          ? `Znaleziono ${found.length} zwolnień dla ${uniquePeople(found)} pracowników.`
           : "Brak zwolnień w wybranym zakresie.",
       });
       setBusy("");
@@ -275,24 +511,74 @@ export function DashboardPage() {
     results.length > 0 && results.every((row) => selectedIds.has(row.resultId));
 
   return (
-    <Stack spacing={3}>
-      <Box>
-        <Chip
-          size="small"
-          color="success"
-          variant="outlined"
-          icon={<CloudDoneRoundedIcon />}
-          label="Firebase skonfigurowany"
-          sx={{ mb: 1.5 }}
-        />
-        <Typography variant="h4">Monitoring zwolnień</Typography>
-        <Typography color="text.secondary" sx={{ mt: 0.75 }}>
-          Połącz rejestr pracowników z zaświadczeniami ZUS według numeru PESEL.
-        </Typography>
-      </Box>
+    <Stack spacing={1.6}>
+      <Paper sx={{ p: 1.5 }}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "1fr",
+              md: "minmax(260px,1.5fr) minmax(150px,.7fr) minmax(150px,.7fr) 220px",
+            },
+            gap: 1.25,
+            alignItems: "center",
+          }}
+        >
+          <FormControl size="small" fullWidth>
+            <InputLabel id="project-label">Projekt</InputLabel>
+            <Select
+              labelId="project-label"
+              label="Projekt"
+              value={selectedProject}
+              onChange={(event) => setSelectedProject(event.target.value)}
+              startAdornment={<FolderRoundedIcon sx={{ mr: 1, color: "primary.main" }} />}
+            >
+              <MenuItem value="all">Wszystkie projekty ({projects.length})</MenuItem>
+              {projects.map((project) => (
+                <MenuItem key={project} value={project}>
+                  {project}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField
+            label="Data od"
+            type="date"
+            value={dateRange.start}
+            onChange={(event) => setDateRange({ ...dateRange, start: event.target.value })}
+            slotProps={{ inputLabel: { shrink: true } }}
+          />
+          <TextField
+            label="Data do"
+            type="date"
+            value={dateRange.end}
+            onChange={(event) => setDateRange({ ...dateRange, end: event.target.value })}
+            slotProps={{ inputLabel: { shrink: true } }}
+          />
+          <Button
+            variant="contained"
+            startIcon={
+              busy === "search" ? (
+                <CircularProgress size={17} color="inherit" />
+              ) : (
+                <SearchRoundedIcon />
+              )
+            }
+            onClick={runSearch}
+            disabled={Boolean(busy)}
+            sx={{ minHeight: 40 }}
+          >
+            Szukaj zwolnień
+          </Button>
+        </Box>
+      </Paper>
 
       {message && (
-        <Alert severity={message.severity} onClose={() => setMessage(null)}>
+        <Alert
+          severity={message.severity}
+          onClose={() => setMessage(null)}
+          sx={{ py: 0, minHeight: 40, alignItems: "center" }}
+        >
           {message.text}
         </Alert>
       )}
@@ -300,44 +586,63 @@ export function DashboardPage() {
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "repeat(3, minmax(0, 1fr))" },
-          gap: 2,
+          gridTemplateColumns: { xs: "1fr", md: "1.15fr .85fr" },
+          gap: 1.5,
         }}
       >
-        <StatCard
+        <SummaryCard
+          title={selectedProject === "all" ? "Pracownicy" : "Pracownicy projektu"}
+          value={scopeEmployeeCount}
+          helper="w aktywnym rejestrze"
+          sickCount={scopeSickCount}
+          trend={scopeTrend}
+          previousRange={previousRange}
           icon={<GroupsRoundedIcon fontSize="large" />}
-          label="Aktywni"
-          value={activeCount}
-          color="secondary.main"
+          accent="secondary"
         />
-        <StatCard
-          icon={<ArchiveRoundedIcon fontSize="large" />}
-          label="Archiwum"
-          value={archivedCount}
-        />
-        <StatCard
-          icon={<MonitorHeartRoundedIcon fontSize="large" />}
-          label="Zwolnienia w wynikach"
+        <SummaryCard
+          title="Zwolnienia w wynikach"
           value={results.length}
-          color="error.main"
+          helper={`${resultPeopleCount} pracowników • ${selectedRows.length} wybranych`}
+          icon={<MonitorHeartRoundedIcon fontSize="large" />}
+          accent="error"
         />
       </Box>
+
+      {visibleProjectStats.length > 0 && (
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns:
+              selectedProject === "all"
+                ? { xs: "1fr", sm: "repeat(2,1fr)", lg: "repeat(5,minmax(0,1fr))" }
+                : { xs: "1fr", sm: "minmax(280px,480px)" },
+            gap: 1.25,
+          }}
+        >
+          {visibleProjectStats.map((stats) => (
+            <ProjectCard key={stats.project} stats={stats} previousRange={previousRange} />
+          ))}
+        </Box>
+      )}
 
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", lg: "360px minmax(0,1fr)" },
-          gap: 2,
+          gridTemplateColumns: { xs: "1fr", lg: "310px minmax(0,1fr)" },
+          gap: 1.5,
           alignItems: "start",
         }}
       >
-        <Paper sx={{ p: 2.5 }}>
-          <Stack spacing={2}>
+        <Paper sx={{ p: 2 }}>
+          <Stack spacing={1.4}>
             <Box>
-              <Typography variant="overline" color="primary.light">
+              <Typography variant="overline" color="primary.light" sx={{ lineHeight: 1 }}>
                 Źródła danych
               </Typography>
-              <Typography variant="h6">Pliki wejściowe</Typography>
+              <Typography variant="h6" sx={{ fontSize: 18, mt: 0.35 }}>
+                Pliki wejściowe
+              </Typography>
             </Box>
             <SourceCard
               title="Rejestr pracowników"
@@ -345,9 +650,8 @@ export function DashboardPage() {
               meta={
                 employees.length
                   ? `${employees.length} unikalnych osób`
-                  : "Wybierz jednocześnie wszystkie pliki XLS"
+                  : "Wybierz wszystkie pliki XLS"
               }
-              multiple
               busy={busy === "employees"}
               onFiles={uploadEmployees}
             />
@@ -359,83 +663,28 @@ export function DashboardPage() {
                   ? `${sickLeaves.length} unikalnych zwolnień`
                   : "Wybierz aktualny plik XLS"
               }
-              multiple
               busy={busy === "leaves"}
               onFiles={uploadLeaves}
             />
           </Stack>
         </Paper>
 
-        <Paper sx={{ p: { xs: 2, md: 2.5 }, minWidth: 0 }}>
-          <Stack spacing={2.25}>
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: { xs: "1fr", md: "minmax(220px,1.5fr) 1fr 1fr" },
-                gap: 1.5,
-              }}
-            >
-              <FormControl size="small" fullWidth>
-                <InputLabel id="project-label">Projekt</InputLabel>
-                <Select
-                  labelId="project-label"
-                  label="Projekt"
-                  value={selectedProject}
-                  onChange={(event) => setSelectedProject(event.target.value)}
-                  startAdornment={
-                    <FolderRoundedIcon sx={{ mr: 1, color: "primary.main" }} />
-                  }
-                >
-                  <MenuItem value="all">Wszystkie projekty ({projects.length})</MenuItem>
-                  {projects.map((project) => (
-                    <MenuItem key={project} value={project}>
-                      {project}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <TextField
-                label="Data od"
-                type="date"
-                value={dateRange.start}
-                onChange={(event) =>
-                  setDateRange({ ...dateRange, start: event.target.value })
-                }
-                slotProps={{ inputLabel: { shrink: true } }}
-              />
-              <TextField
-                label="Data do"
-                type="date"
-                value={dateRange.end}
-                onChange={(event) =>
-                  setDateRange({ ...dateRange, end: event.target.value })
-                }
-                slotProps={{ inputLabel: { shrink: true } }}
-              />
-            </Box>
-
-            <Button
-              variant="contained"
-              size="large"
-              startIcon={
-                busy === "search" ? (
-                  <CircularProgress size={18} color="inherit" />
-                ) : (
-                  <SearchRoundedIcon />
-                )
-              }
-              onClick={runSearch}
-              disabled={Boolean(busy)}
-              sx={{ minHeight: 52 }}
-            >
-              Szukaj zwolnień
-            </Button>
-
+        <Paper sx={{ p: 2, minWidth: 0 }}>
+          <Stack spacing={1.4}>
             <Stack
               direction={{ xs: "column", sm: "row" }}
               alignItems={{ xs: "stretch", sm: "center" }}
               spacing={1}
             >
+              <Box>
+                <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
+                  Wyniki wyszukiwania
+                </Typography>
+                <Typography variant="body2" fontWeight={800}>
+                  {results.length} zwolnień • {resultPeopleCount} pracowników
+                </Typography>
+              </Box>
+              <Box sx={{ flexGrow: 1 }} />
               <ToggleButtonGroup
                 exclusive
                 size="small"
@@ -445,20 +694,19 @@ export function DashboardPage() {
                 <ToggleButton value={8}>8h</ToggleButton>
                 <ToggleButton value={12}>12h</ToggleButton>
               </ToggleButtonGroup>
-              <Box sx={{ flexGrow: 1 }} />
               <Button
                 color="secondary"
                 variant="contained"
+                size="small"
                 startIcon={<DownloadRoundedIcon />}
                 disabled={!selectedRows.length}
-                onClick={() =>
-                  exportAbsenceReport(selectedRows, hours, selectedProject)
-                }
+                onClick={() => exportAbsenceReport(selectedRows, hours, selectedProject)}
               >
                 Absencja XLS ({selectedRows.length})
               </Button>
               <Button
                 variant="contained"
+                size="small"
                 startIcon={<TableViewRoundedIcon />}
                 disabled={!toyotaRows.length}
                 onClick={() => exportToyotaReport(toyotaRows)}
@@ -469,7 +717,7 @@ export function DashboardPage() {
 
             <Divider />
 
-            <TableContainer sx={{ maxHeight: 560 }}>
+            <TableContainer sx={{ height: { xs: 520, lg: 610 }, minHeight: 520 }}>
               <Table stickyHeader size="small" sx={{ minWidth: 760 }}>
                 <TableHead>
                   <TableRow>
@@ -509,9 +757,7 @@ export function DashboardPage() {
                         selected={selected}
                         onClick={() => {
                           const next = new Set(selectedIds);
-                          selected
-                            ? next.delete(row.resultId)
-                            : next.add(row.resultId);
+                          selected ? next.delete(row.resultId) : next.add(row.resultId);
                           setSelectedIds(next);
                         }}
                         sx={{ cursor: "pointer" }}
@@ -524,7 +770,7 @@ export function DashboardPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" fontWeight={750}>
+                          <Typography variant="body2" fontWeight={800}>
                             {row.employee.fullName}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
@@ -545,18 +791,11 @@ export function DashboardPage() {
                   })}
                   {!results.length && (
                     <TableRow>
-                      <TableCell colSpan={5} sx={{ py: 9, textAlign: "center" }}>
+                      <TableCell colSpan={5} sx={{ py: 10, textAlign: "center" }}>
                         <MonitorHeartRoundedIcon
-                          sx={{
-                            fontSize: 40,
-                            color: "primary.main",
-                            opacity: 0.65,
-                            mb: 1,
-                          }}
+                          sx={{ fontSize: 40, color: "primary.main", opacity: 0.65, mb: 1 }}
                         />
-                        <Typography fontWeight={750}>
-                          Wyniki pojawią się tutaj
-                        </Typography>
+                        <Typography fontWeight={800}>Wyniki pojawią się tutaj</Typography>
                         <Typography variant="body2" color="text.secondary">
                           Wczytaj oba źródła i uruchom wyszukiwanie.
                         </Typography>
