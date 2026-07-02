@@ -110,6 +110,24 @@ const eventLabels = {
   changed: "Zmiana terminu zwolnienia",
 };
 
+const newsImportTime = (event) => {
+  const value = event.createdAt;
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  const timestamp = new Date(value || 0).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const newsEventDate = (event) =>
+  event.type === "ended" ? event.end || event.start || "" : event.start || event.end || "";
+
+const sortNewsEvents = (left, right) => {
+  const importDifference = newsImportTime(right) - newsImportTime(left);
+  if (importDifference) return importDifference;
+  const dateDifference = newsEventDate(right).localeCompare(newsEventDate(left));
+  if (dateDifference) return dateDifference;
+  return String(right.id || "").localeCompare(String(left.id || ""));
+};
+
 function TrendIndicator({ value, previousRange }) {
   const positive = value > 0;
   const negative = value < 0;
@@ -353,9 +371,12 @@ function ProjectCard({ stats, previousRange }) {
             <Box
               aria-label={`${stats.sickCount} pracowników na L4`}
               sx={{
-                minWidth: 48,
+                minWidth: 54,
                 position: "relative",
                 isolation: "isolate",
+                display: "flex",
+                alignItems: "baseline",
+                gap: 0.55,
                 "&::before": hasSickLeaves
                   ? {
                       content: '""',
@@ -363,8 +384,8 @@ function ProjectCard({ stats, previousRange }) {
                       zIndex: -1,
                       width: 38,
                       height: 28,
-                      left: -7,
-                      top: -6,
+                      left: -5,
+                      top: 1,
                       borderRadius: "50%",
                       bgcolor: alpha("#FF5F78", 0.18),
                       filter: "blur(10px)",
@@ -376,7 +397,7 @@ function ProjectCard({ stats, previousRange }) {
                 variant="h6"
                 sx={{
                   lineHeight: 1,
-                  fontSize: hasSickLeaves ? 24 : undefined,
+                  fontSize: 30,
                   fontWeight: hasSickLeaves ? 900 : undefined,
                   color: hasSickLeaves ? "#FF7188" : "text.primary",
                   textShadow: hasSickLeaves
@@ -389,14 +410,13 @@ function ProjectCard({ stats, previousRange }) {
               <Typography
                 variant="caption"
                 sx={{
-                  display: "block",
-                  mt: hasSickLeaves ? 0.15 : 0,
                   color: hasSickLeaves ? alpha("#FF9AAA", 0.92) : "text.secondary",
                   fontWeight: hasSickLeaves ? 700 : 400,
-                  lineHeight: 1.2,
+                  fontSize: 11,
+                  lineHeight: 1,
                 }}
               >
-                na L4
+                L4
               </Typography>
             </Box>
           </Stack>
@@ -657,9 +677,10 @@ export function DashboardPage() {
       ? projectStats
       : projectStats.filter((stats) => stats.project === selectedProject);
   const visibleNewsEvents =
-    selectedProject === "all"
-      ? newsEvents
-      : newsEvents.filter((event) => event.projectName === selectedProject);
+    (selectedProject === "all"
+      ? [...newsEvents]
+      : newsEvents.filter((event) => event.projectName === selectedProject)
+    ).sort(sortNewsEvents);
 
   const currentScopeRows =
     selectedProject === "all"
