@@ -116,6 +116,17 @@ const projectAccent = (project, fallbackIndex) => {
   return PROJECT_ACCENTS[fallbackIndex % PROJECT_ACCENTS.length];
 };
 
+const projectDisplayName = (project) => {
+  const normalized = project.toLowerCase();
+  if (normalized.includes("cerland")) return "CERLAND";
+  if (normalized.includes("hermes fulfilment")) return "HERMES";
+  if (normalized.includes("id logistics")) return "ID LOGISTICS";
+  if (normalized.includes("srg global")) return "SRG";
+  if (normalized.includes("toyota boshoku poland pt pl")) return "TOYOTA PL";
+  if (normalized.includes("toyota boshoku poland pt")) return "TOYOTA";
+  return project;
+};
+
 const eventLabels = {
   started: "Rozpoczęcie zwolnienia",
   new: "Nowe zwolnienie",
@@ -319,13 +330,14 @@ function SummaryCard({
 
 function ProjectCard({ stats, previousRange }) {
   const hasSickLeaves = stats.sickCount > 0;
+  const displayName = projectDisplayName(stats.project);
 
   return (
     <Paper
       variant="outlined"
       sx={{
-        p: 1.7,
-        minHeight: 156,
+        p: 1.45,
+        minHeight: 142,
         position: "relative",
         overflow: "hidden",
         bgcolor: "rgba(255,255,255,.018)",
@@ -353,26 +365,25 @@ function ProjectCard({ stats, previousRange }) {
         },
       }}
     >
-      <Stack direction="row" justifyContent="space-between" spacing={1.25} height="100%">
+      <Stack direction="row" justifyContent="space-between" spacing={0.9} height="100%">
         <Box sx={{ minWidth: 0 }}>
           <Tooltip title={stats.project}>
             <Typography
               variant="body2"
               fontWeight={800}
+              noWrap
               sx={{
-                mb: 1.1,
-                minHeight: 38,
-                lineHeight: 1.25,
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical",
+                mb: 0.9,
+                lineHeight: 1.15,
+                letterSpacing: ".01em",
                 overflow: "hidden",
+                textOverflow: "ellipsis",
               }}
             >
-              {stats.project}
+              {displayName}
             </Typography>
           </Tooltip>
-          <Stack direction="row" spacing={1.5} alignItems="stretch" sx={{ mb: 1.15 }}>
+          <Stack direction="row" spacing={1.25} alignItems="stretch" sx={{ mb: 0.95 }}>
             <Box>
               <Typography variant="h6" sx={{ lineHeight: 1 }}>
                 {stats.employeeCount}
@@ -433,7 +444,7 @@ function ProjectCard({ stats, previousRange }) {
               </Typography>
             </Box>
           </Stack>
-          <Stack spacing={0.2}>
+          <Stack spacing={0.12}>
             <Typography variant="caption" color="text.secondary" noWrap>
               Lista:{" "}
               <Box component="span" sx={{ color: "text.primary" }}>
@@ -448,7 +459,7 @@ function ProjectCard({ stats, previousRange }) {
             </Typography>
           </Stack>
         </Box>
-        <Stack alignItems="flex-end" justifyContent="space-between">
+        <Stack alignItems="flex-end" justifyContent="space-between" sx={{ flexShrink: 0 }}>
           <FolderRoundedIcon fontSize="small" sx={{ color: stats.accent }} />
           <TrendIndicator value={stats.trend} previousRange={previousRange} />
         </Stack>
@@ -962,10 +973,10 @@ export function DashboardPage() {
                     xs: "1fr",
                     sm: "repeat(2,minmax(0,1fr))",
                     lg: "repeat(3,minmax(0,1fr))",
-                    xl: "repeat(5,minmax(0,1fr))",
+                    xl: "repeat(6,minmax(0,1fr))",
                   }
                 : { xs: "1fr", sm: "minmax(280px,480px)" },
-            gap: 1.25,
+            gap: 1,
           }}
         >
           {visibleProjectStats.map((stats) => (
