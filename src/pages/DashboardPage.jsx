@@ -10,6 +10,7 @@ import HorizontalRuleRoundedIcon from "@mui/icons-material/HorizontalRuleRounded
 import MonitorHeartRoundedIcon from "@mui/icons-material/MonitorHeartRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import TableViewRoundedIcon from "@mui/icons-material/TableViewRounded";
+import VisibilityOffRoundedIcon from "@mui/icons-material/VisibilityOffRounded";
 import {
   Alert,
   Box,
@@ -50,6 +51,7 @@ import {
   searchSickLeaves,
 } from "../lib/data";
 import {
+  hideArchivedEmployeeSickLeaves,
   loadCloudData,
   replaceProjectEmployees,
   replaceSickLeaves,
@@ -101,7 +103,18 @@ const formatImportTime = (value) => {
   }).format(date);
 };
 
-const PROJECT_ACCENTS = ["#7C8CFF", "#22D3A2", "#FF6B86", "#38BDF8", "#F6C85F"];
+const PROJECT_ACCENTS = ["#7C8CFF", "#22D3A2", "#FF6B86", "#38BDF8", "#F6C85F", "#A78BFA"];
+
+const projectAccent = (project, fallbackIndex) => {
+  const normalized = project.toLowerCase();
+  if (normalized.includes("cerland")) return "#7C8CFF";
+  if (normalized.includes("id logistics")) return "#22D3A2";
+  if (normalized.includes("srg global")) return "#FF6B86";
+  if (normalized.includes("toyota boshoku poland pt pl")) return "#F6C85F";
+  if (normalized.includes("toyota boshoku poland pt")) return "#38BDF8";
+  if (normalized.includes("hermes fulfilment")) return "#A78BFA";
+  return PROJECT_ACCENTS[fallbackIndex % PROJECT_ACCENTS.length];
+};
 
 const eventLabels = {
   started: "Rozpoczęcie zwolnienia",
@@ -555,6 +568,7 @@ export function DashboardPage() {
   const [employees, setEmployees] = useState([]);
   const [sickLeaves, setSickLeaves] = useState([]);
   const [newsEvents, setNewsEvents] = useState([]);
+  const [hiddenArchiveKeys, setHiddenArchiveKeys] = useState(new Set());
   const [cloudProjects, setCloudProjects] = useState([]);
   const [cloudState, setCloudState] = useState({});
   const [cloudLoading, setCloudLoading] = useState(true);
@@ -575,6 +589,7 @@ export function DashboardPage() {
       );
       setSickLeaves(cloud.sickLeaves);
       setNewsEvents(cloud.newsEvents || []);
+      setHiddenArchiveKeys(cloud.hiddenArchiveKeys || new Set());
       setCloudProjects(cloud.projects);
       setCloudState(cloud.state);
     } catch (error) {
@@ -631,8 +646,9 @@ export function DashboardPage() {
         project: "all",
         dateStart: dateRange.start,
         dateEnd: dateRange.end,
+        hiddenArchiveKeys,
       }),
-    [employees, sickLeaves, dateRange],
+    [employees, sickLeaves, dateRange, hiddenArchiveKeys],
   );
 
   const previousPeriodRows = useMemo(
@@ -643,8 +659,9 @@ export function DashboardPage() {
         project: "all",
         dateStart: previousRange.start,
         dateEnd: previousRange.end,
+        hiddenArchiveKeys,
       }),
-    [employees, sickLeaves, previousRange],
+    [employees, sickLeaves, previousRange, hiddenArchiveKeys],
   );
 
   const projectStats = useMemo(
@@ -664,7 +681,7 @@ export function DashboardPage() {
           ).length,
           sickCount,
           trend: sickCount - previousCount,
-          accent: PROJECT_ACCENTS[index % PROJECT_ACCENTS.length],
+          accent: projectAccent(project, index),
           lastActiveImportAt: cloudProject?.lastActiveImportAt,
           lastArchivedImportAt: cloudProject?.lastArchivedImportAt,
         };
@@ -810,6 +827,7 @@ export function DashboardPage() {
         project: selectedProject,
         dateStart: dateRange.start,
         dateEnd: dateRange.end,
+        hiddenArchiveKeys,
       });
       setResults(found);
       setSelectedIds(new Set(found.map((row) => row.resultId)));
@@ -821,6 +839,43 @@ export function DashboardPage() {
       });
       setBusy("");
     }, 100);
+  };
+
+  const hideArchiveRow = async (row) => {
+    if (!row.employee.archived) return;
+    const confirmed = window.confirm(
+      `Ukryć archiwalne zwolnienia pracownika ${row.employee.fullName} dla projektu ${row.employee.project}?`,
+    );
+    if (!confirmed) return;
+    setBusy("hide-archive");
+    try {
+      const archiveKey = await hideArchivedEmployeeSickLeaves({
+        employee: row.employee,
+        user,
+      });
+      setHiddenArchiveKeys((current) => new Set([...current, archiveKey]));
+      setResults((current) =>
+        current.filter((candidate) => candidate.archiveKey !== archiveKey),
+      );
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        results
+          .filter((candidate) => candidate.archiveKey === archiveKey)
+          .forEach((candidate) => next.delete(candidate.resultId));
+        return next;
+      });
+      setMessage({
+        severity: "success",
+        text: "Archiwalne zwolnienia pracownika zostały ukryte.",
+      });
+    } catch (error) {
+      setMessage({
+        severity: "error",
+        text: `Nie udało się ukryć archiwalnych zwolnień: ${error.message}`,
+      });
+    } finally {
+      setBusy("");
+    }
   };
 
   const allSelected =
@@ -1095,12 +1150,56 @@ export function DashboardPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" fontWeight={800}>
-                            {row.employee.fullName}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {row.employee.project}
-                          </Typography>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Box sx={{ minWidth: 0 }}>
+                              <Stack direction="row" spacing={0.75} alignItems="center">
+                                <Typography variant="body2" fontWeight={800}>
+                                  {row.employee.fullName}
+                                </Typography>
+                                {row.employee.archived && (
+                                  <Chip
+                                    size="small"
+                                    label="Archiwum"
+                                    sx={{
+                                      height: 20,
+                                      color: "text.secondary",
+                                      bgcolor: "rgba(255,255,255,.045)",
+                                      "& .MuiChip-label": {
+                                        px: 0.75,
+                                        fontSize: 10,
+                                        fontWeight: 800,
+                                      },
+                                    }}
+                                  />
+                                )}
+                              </Stack>
+                              <Typography variant="caption" color="text.secondary">
+                                {row.employee.project}
+                              </Typography>
+                            </Box>
+                            {row.employee.archived && (
+                              <Tooltip title="Ukryj archiwalne zwolnienia tego pracownika">
+                                <IconButton
+                                  size="small"
+                                  disabled={Boolean(busy)}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    hideArchiveRow(row);
+                                  }}
+                                  sx={{
+                                    ml: "auto",
+                                    color: "text.disabled",
+                                    "&:hover": {
+                                      color: "primary.light",
+                                      bgcolor: "rgba(124,140,255,.08)",
+                                    },
+                                  }}
+                                >
+                                  <VisibilityOffRoundedIcon fontSize="inherit" />
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                          </Stack>
                         </TableCell>
                         <TableCell>{formatDisplayDate(row.start)}</TableCell>
                         <TableCell>{formatDisplayDate(row.end)}</TableCell>

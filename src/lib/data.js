@@ -27,6 +27,47 @@ export const normalizeId = (value) => {
 
 export const normalizeProject = (value) => cleanText(value) || "Bez projektu";
 
+export const normalizeProjectName = (value) => {
+  const source = normalizeProject(value);
+  return /hermes fulfilment/i.test(source)
+    ? "Hermes Fulfilment Sp. z o.o. UZwPT"
+    : source;
+};
+
+export const normalizeCompanyCode = (value) =>
+  normalizeHeader(value).replace(/[^a-z0-9]+/g, "").toUpperCase();
+
+const normalizeBusinessCode = (value) => normalizeCompanyCode(value).replace(/Z[OPT]?$/i, "");
+
+export const projectCompanyCodes = (projectName, rawProjectName = projectName) => {
+  const source = cleanText(rawProjectName || projectName);
+  const normalized = normalizeHeader(source);
+  if (normalized.includes("hermes fulfilment")) return ["US"];
+
+  const codes = [...source.matchAll(/\(([^)]+)\)/g)]
+    .map((match) => normalizeBusinessCode(match[1]))
+    .filter(Boolean);
+  return [...new Set(codes)];
+};
+
+export const employeeArchiveKey = (employee) =>
+  `${employee.projectId || normalizeHeader(employee.project)}::${employee.pesel || employee.id}`;
+
+const leaveCompanyCodes = (leave) =>
+  (leave.companies || []).map(normalizeBusinessCode).filter(Boolean);
+
+export const employeeMatchesLeaveCompany = (employee, leave) => {
+  const expectedCompanies = employee.companies?.length
+    ? employee.companies
+    : projectCompanyCodes(employee.project);
+  if (!expectedCompanies.length) return true;
+  const actualCompanies = leaveCompanyCodes(leave);
+  if (!actualCompanies.length) return true;
+  return actualCompanies.some((actual) =>
+    expectedCompanies.some((expected) => actual === normalizeBusinessCode(expected)),
+  );
+};
+
 export const parseDate = (value) => {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -176,7 +217,9 @@ export const parseEmployeeFile = async (file) => {
       aliases: [...new Set([pesel, passport].filter(Boolean))],
       pesel,
       passport,
-      project: normalizeProject(row[indexes.project]),
+      project: normalizeProjectName(row[indexes.project]),
+      rawProject: normalizeProject(row[indexes.project]),
+      companies: projectCompanyCodes(row[indexes.project]),
       fullName: `${lastName} ${firstName}`.trim() || primaryId,
       lastName,
       firstName,
@@ -191,11 +234,18 @@ export const mergeEmployees = (records) => {
   const sorted = [...records].sort(
     (left, right) => Number(left.archived) - Number(right.archived),
   );
-  const seen = new Set();
+  const seenActive = new Set();
+  const seenArchive = new Set();
   return sorted.filter((employee) => {
     const keys = employee.aliases?.length ? employee.aliases : [employee.id];
-    if (keys.some((key) => seen.has(key))) return false;
-    keys.forEach((key) => seen.add(key));
+    if (!employee.archived) {
+      if (keys.some((key) => seenActive.has(key))) return false;
+      keys.forEach((key) => seenActive.add(key));
+      return true;
+    }
+    const projectKey = employee.projectId || normalizeHeader(employee.project);
+    if (keys.some((key) => seenArchive.has(`${projectKey}::${key}`))) return false;
+    keys.forEach((key) => seenArchive.add(`${projectKey}::${key}`));
     return true;
   });
 };
@@ -273,24 +323,41 @@ export const searchSickLeaves = ({
   project = "all",
   dateStart = "",
   dateEnd = "",
+  hiddenArchiveKeys = new Set(),
 }) => {
-  const employeeById = new Map();
+  const activeById = new Map();
+  const archiveById = new Map();
   employees.forEach((employee) => {
     const aliases = employee.aliases?.length ? employee.aliases : [employee.id];
-    aliases.forEach((alias) => employeeById.set(alias, employee));
+    aliases.forEach((alias) => {
+      const lookup = employee.archived ? archiveById : activeById;
+      if (!lookup.has(alias)) lookup.set(alias, []);
+      lookup.get(alias).push(employee);
+    });
   });
   const results = [];
   sickLeaves.forEach((leave) => {
-    const employee = employeeById.get(leave.id);
-    if (!employee) return;
-    if (project !== "all" && employee.project !== project) return;
     if (dateStart && leave.end < dateStart) return;
     if (dateEnd && leave.start > dateEnd) return;
     if (normalizeHeader(leave.status).includes("anul")) return;
-    results.push({
-      ...leave,
-      employee,
-      resultId: `${leave.certificate}|${leave.id}|${leave.start}|${employee.project}`,
+    const activeCandidates = activeById.get(leave.id) || [];
+    const archiveCandidates = archiveById.get(leave.id) || [];
+    const activeProjectKeys = new Set(
+      activeCandidates.map((employee) => employee.projectId || normalizeHeader(employee.project)),
+    );
+    [...activeCandidates, ...archiveCandidates].forEach((employee) => {
+      if (project !== "all" && employee.project !== project) return;
+      if (!employeeMatchesLeaveCompany(employee, leave)) return;
+      const archiveKey = employeeArchiveKey(employee);
+      if (employee.archived && hiddenArchiveKeys.has(archiveKey)) return;
+      const employeeProjectKey = employee.projectId || normalizeHeader(employee.project);
+      if (employee.archived && activeProjectKeys.has(employeeProjectKey)) return;
+      results.push({
+        ...leave,
+        employee,
+        archiveKey,
+        resultId: `${employee.archived ? "archive" : "active"}|${leave.certificate}|${leave.id}|${leave.start}|${employee.project}`,
+      });
     });
   });
   return results.sort(

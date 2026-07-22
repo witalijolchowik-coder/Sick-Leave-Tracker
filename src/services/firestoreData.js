@@ -13,6 +13,11 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
+import {
+  employeeArchiveKey,
+  employeeMatchesLeaveCompany,
+  projectCompanyCodes,
+} from "../lib/data";
 
 const WRITE_BATCH_SIZE = 400;
 const SICK_LEAVE_CHUNK_SIZE = 200;
@@ -85,6 +90,10 @@ const employeePayload = (employee, projectId, projectName, version, archived) =>
   passport: employee.passport || "",
   projectId,
   projectName,
+  rawProjectName: employee.rawProject || employee.project || projectName,
+  companies: employee.companies?.length
+    ? employee.companies
+    : projectCompanyCodes(projectName, employee.rawProject || employee.project),
   fullName: employee.fullName || employee.id,
   firstName: employee.firstName || "",
   lastName: employee.lastName || "",
@@ -121,13 +130,23 @@ const leaveKey = (record) =>
     : `${record.id}::${record.start}`;
 
 const employeeLookup = (employees) => {
-  const lookup = new Map();
+  const lookup = { active: new Map(), archive: new Map() };
   employees.forEach((employee) => {
-    (employee.aliases?.length ? employee.aliases : [employee.id]).forEach((alias) =>
-      lookup.set(alias, employee),
-    );
+    const target = employee.archived ? lookup.archive : lookup.active;
+    (employee.aliases?.length ? employee.aliases : [employee.id]).forEach((alias) => {
+      if (!target.has(alias)) target.set(alias, []);
+      target.get(alias).push(employee);
+    });
   });
   return lookup;
+};
+
+const selectEmployeeForLeaveEvent = (employeesById, record) => {
+  const candidates = [
+    ...(employeesById.active.get(record.id) || []),
+    ...(employeesById.archive.get(record.id) || []),
+  ].filter((employee) => employeeMatchesLeaveCompany(employee, record));
+  return candidates[0] || null;
 };
 
 const buildSickLeaveEvents = ({
@@ -145,7 +164,7 @@ const buildSickLeaveEvents = ({
   const events = [];
 
   const createEvent = (type, record, previousRecord = null) => {
-    const employee = employeesById.get(record.id);
+    const employee = selectEmployeeForLeaveEvent(employeesById, record);
     if (!employee) return;
     const activeOnImport =
       record.start <= toLocalIsoDate(new Date()) &&
@@ -397,7 +416,12 @@ const restoreEmployee = (data, archived) => ({
   aliases: data.aliases || [data.employeeId],
   pesel: data.pesel || "",
   passport: data.passport || "",
+  projectId: data.projectId || "",
   project: data.projectName,
+  rawProject: data.rawProjectName || data.projectName,
+  companies: data.companies?.length
+    ? data.companies
+    : projectCompanyCodes(data.projectName, data.rawProjectName),
   fullName: data.fullName,
   firstName: data.firstName || "",
   lastName: data.lastName || "",
@@ -409,6 +433,7 @@ export async function loadCloudData() {
     projectsSnapshot,
     employeesSnapshot,
     archivesSnapshot,
+    hiddenArchiveSnapshot,
     stateSnapshot,
     newsSnapshot,
   ] =
@@ -416,6 +441,7 @@ export async function loadCloudData() {
       getDocs(collection(db, "projects")),
       getDocs(collection(db, "employees")),
       getDocs(collection(db, "employeeArchives")),
+      getDocs(collection(db, "hiddenArchiveSickLeaves")),
       getDoc(STATE_DOCUMENT),
       getDocs(
         query(collection(db, "newsEvents"), orderBy("createdAt", "desc"), limit(100)),
@@ -454,6 +480,11 @@ export async function loadCloudData() {
     archivedEmployees,
     projects,
     sickLeaves,
+    hiddenArchiveKeys: new Set(
+      hiddenArchiveSnapshot.docs.map(
+        (snapshotDoc) => snapshotDoc.data().archiveKey || snapshotDoc.id,
+      ),
+    ),
     newsEvents: newsSnapshot.docs.map((snapshotDoc) => ({
       id: snapshotDoc.id,
       ...snapshotDoc.data(),
@@ -462,11 +493,35 @@ export async function loadCloudData() {
   };
 }
 
+export async function hideArchivedEmployeeSickLeaves({ employee, user }) {
+  if (!employee?.archived) {
+    throw new Error("Można ukrywać tylko archiwalne zwolnienia pracowników.");
+  }
+  const archiveKey = employeeArchiveKey(employee);
+  const projectId = employee.projectId || createProjectId(employee.project);
+  await setDoc(
+    doc(db, "hiddenArchiveSickLeaves", safeDocPart(archiveKey)),
+    {
+      archiveKey,
+      employeeId: employee.pesel || employee.id,
+      projectId,
+      projectName: employee.project,
+      employeeName: employee.fullName || employee.id,
+      hiddenAt: serverTimestamp(),
+      hiddenBy: user?.email || user?.uid || "unknown",
+      hiddenByUid: user?.uid || "",
+    },
+    { merge: true },
+  );
+  return archiveKey;
+}
+
 export function subscribeToCloudChanges(onChange, onError) {
   let readyProjects = false;
   let readyState = false;
+  let readyHiddenArchive = false;
   const notify = () => {
-    if (readyProjects && readyState) onChange();
+    if (readyProjects && readyState && readyHiddenArchive) onChange();
   };
   const unsubscribeProjects = onSnapshot(
     collection(db, "projects"),
@@ -484,8 +539,17 @@ export function subscribeToCloudChanges(onChange, onError) {
     },
     onError,
   );
+  const unsubscribeHiddenArchive = onSnapshot(
+    collection(db, "hiddenArchiveSickLeaves"),
+    () => {
+      readyHiddenArchive = true;
+      notify();
+    },
+    onError,
+  );
   return () => {
     unsubscribeProjects();
     unsubscribeState();
+    unsubscribeHiddenArchive();
   };
 }

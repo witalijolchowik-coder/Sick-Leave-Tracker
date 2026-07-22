@@ -34,6 +34,10 @@ service cloud.firestore {
       allow read, write: if signedIn();
     }
 
+    match /hiddenArchiveSickLeaves/{hiddenId} {
+      allow read, write: if signedIn();
+    }
+
     match /appState/{documentId} {
       allow read, write: if signedIn();
     }
