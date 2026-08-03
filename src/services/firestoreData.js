@@ -105,6 +105,7 @@ const sickLeavePayload = (record) => ({
   id: record.id,
   certificate: record.certificate || "",
   sourceName: record.sourceName || "",
+  issuedAt: record.issuedAt || "",
   start: record.start,
   end: record.end,
   care: Boolean(record.care),

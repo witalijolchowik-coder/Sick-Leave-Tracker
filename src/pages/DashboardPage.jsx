@@ -42,6 +42,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import {
   exportAbsenceReport,
+  exportHermesReport,
   exportToyotaReport,
   formatDisplayDate,
   mergeEmployees,
@@ -126,6 +127,8 @@ const projectDisplayName = (project) => {
   if (normalized.includes("toyota boshoku poland pt")) return "TOYOTA";
   return project;
 };
+
+const isHermesProject = (project) => project.toLowerCase().includes("hermes fulfilment");
 
 const eventLabels = {
   started: "Rozpoczęcie zwolnienia",
@@ -731,6 +734,7 @@ export function DashboardPage() {
     const project = row.employee.project.toUpperCase();
     return project.includes("TOYOTA") || project.includes("TBPL");
   });
+  const hermesRows = selectedRows.filter((row) => isHermesProject(row.employee.project));
   const resultPeopleCount = uniquePeople(results);
 
   const uploadEmployees = async (files) => {
@@ -1103,6 +1107,24 @@ export function DashboardPage() {
                 onClick={() => exportToyotaReport(toyotaRows)}
               >
                 Raport TBPL ({toyotaRows.length})
+              </Button>
+              <Button
+                variant="contained"
+                size="small"
+                startIcon={<TableViewRoundedIcon />}
+                disabled={!hermesRows.length}
+                onClick={() => exportHermesReport(hermesRows)}
+                sx={{
+                  bgcolor: "#A78BFA",
+                  color: "#080B14",
+                  "&:hover": { bgcolor: "#B9A4FF" },
+                  "&.Mui-disabled": {
+                    bgcolor: "rgba(255,255,255,.09)",
+                    color: "text.disabled",
+                  },
+                }}
+              >
+                Raport Hermes ({hermesRows.length})
               </Button>
             </Stack>
 

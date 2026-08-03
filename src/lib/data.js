@@ -270,6 +270,7 @@ export const parseSickLeaveFile = async (file) => {
       id: findIndex(headers, [
         (header) => header.includes("pesel") || header.includes("tozsamosci"),
       ]),
+      issuedAt: findIndex(headers, [(header) => header.includes("data wystawienia")]),
       range: findIndex(headers, [(header) => header.includes("niezdolnosc do pracy")]),
       care: findIndex(headers, [(header) => header.includes("na opieke")]),
       hospital: findIndex(headers, [(header) => header.includes("pobyt w szpitalu")]),
@@ -288,6 +289,7 @@ export const parseSickLeaveFile = async (file) => {
           (indexes.certificate >= 0 && cleanText(row[indexes.certificate])) ||
           `${id}-${range.start}-${range.end}`,
         sourceName: indexes.person >= 0 ? cleanText(row[indexes.person]) : "",
+        issuedAt: indexes.issuedAt >= 0 ? toIsoDate(row[indexes.issuedAt]) : "",
         start: range.start,
         end: range.end,
         care: indexes.care >= 0 && /^tak$/i.test(cleanText(row[indexes.care])),
@@ -453,4 +455,38 @@ export const exportToyotaReport = (rows) => {
     .format(new Date())
     .replace(/\./g, "-");
   XLSX.writeFile(workbook, `Raport L4_PS_${today}.xlsx`);
+};
+
+export const exportHermesReport = (rows) => {
+  const headers = [
+    "Numer zwolnienia",
+    "Imię",
+    "Nazwisko",
+    "Data wystawienia",
+    "Data od",
+    "Data do",
+  ];
+  const data = rows.map((row) => [
+    row.certificate || "",
+    row.employee.firstName || "",
+    row.employee.lastName || "",
+    formatDisplayDate(row.issuedAt),
+    formatDisplayDate(row.start),
+    formatDisplayDate(row.end),
+  ]);
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
+  worksheet["!cols"] = [
+    { wch: 20 },
+    { wch: 22 },
+    { wch: 24 },
+    { wch: 17 },
+    { wch: 13 },
+    { wch: 13 },
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Raport Hermes");
+  const today = new Intl.DateTimeFormat("pl-PL")
+    .format(new Date())
+    .replace(/\./g, "-");
+  XLSX.writeFile(workbook, `Raport_Hermes_${today}.xlsx`);
 };
