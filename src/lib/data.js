@@ -179,6 +179,13 @@ export const parseEmployeeFile = async (file) => {
   );
   const headers = (rows[headerRowIndex] || []).map(normalizeHeader);
   const indexes = {
+    // Legal employer is only read from an explicit employee-source column.
+    employerName: findIndex(headers, [
+      "Nazwa pracodawcy",
+      "Pracodawca",
+      "Nazwa spółki",
+      "Spółka",
+    ].map(normalizeHeader)),
     project: findIndex(headers, [
       "obecnosc",
       (header) => header.includes("obecnosc"),
@@ -217,6 +224,7 @@ export const parseEmployeeFile = async (file) => {
       aliases: [...new Set([pesel, passport].filter(Boolean))],
       pesel,
       passport,
+      employerName: indexes.employerName >= 0 ? cleanText(row[indexes.employerName]) : "",
       project: normalizeProjectName(row[indexes.project]),
       rawProject: normalizeProject(row[indexes.project]),
       companies: projectCompanyCodes(row[indexes.project]),

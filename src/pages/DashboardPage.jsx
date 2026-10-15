@@ -40,6 +40,7 @@ import {
 import { alpha } from "@mui/material/styles";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { downloadSickLeavePng } from "../lib/sickLeavePng";
 import {
   exportAbsenceReport,
   exportHermesReport,
@@ -1158,6 +1159,7 @@ export function DashboardPage() {
                     <TableCell>Data od</TableCell>
                     <TableCell>Data do</TableCell>
                     <TableCell>Firma</TableCell>
+                    <TableCell aria-label="Pobierz PNG" sx={{ width: 48, px: 0.5 }} />
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -1243,12 +1245,34 @@ export function DashboardPage() {
                             label={row.companies.join(" / ")}
                           />
                         </TableCell>
+                        <TableCell align="center" sx={{ width: 48, px: 0.5 }}>
+                          <Tooltip title="Pobierz informację o L4 (PNG)">
+                            <IconButton
+                              size="small"
+                              aria-label="Pobierz informację o L4 (PNG)"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                try {
+                                  downloadSickLeavePng(row);
+                                } catch {
+                                  setMessage({
+                                    severity: "error",
+                                    text: "Nie udało się pobrać PNG. Spróbuj ponownie.",
+                                  });
+                                }
+                              }}
+                              sx={{ width: 36, height: 36, color: "text.secondary" }}
+                            >
+                              <DownloadRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </TableCell>
                       </TableRow>
                     );
                   })}
                   {!results.length && (
                     <TableRow>
-                      <TableCell colSpan={5} sx={{ py: 10, textAlign: "center" }}>
+                      <TableCell colSpan={6} sx={{ py: 10, textAlign: "center" }}>
                         <MonitorHeartRoundedIcon
                           sx={{ fontSize: 40, color: "primary.main", opacity: 0.65, mb: 1 }}
                         />
