@@ -30,7 +30,7 @@ const row = {
 test("summary keeps legal employer, workplace and certificate data separate and excludes private fields", () => {
   assert.deepEqual(buildSickLeaveSummary(row), {
     employer: "Ukrainian Service Sp. z o.o.",
-    workplace: "Hermes Fulfilment Sp. z o.o.",
+    workplace: "Hermes Fulfilment, Konin Żagański",
     employeeName: "Євген Żółć",
     certificate: "AB 0123456",
     issuedAt: "11.10.2026",
@@ -47,13 +47,31 @@ test("legacy and incomplete records never infer an employer or export a syntheti
   assert.equal(buildSickLeaveSummary({ ...row, issuedAt: "2026-02-30" }).issuedAt, "Brak danych");
 });
 
-test("only recognized trailing project suffixes are removed", () => {
+test("verified dashboard projects use their approved PNG workplace names", () => {
+  const projects = [
+    ["Cerland (PS)", "Cerland Industry, Przejęsław"],
+    ["Hermes Fulfilment Sp. z o.o. UZwPT", "Hermes Fulfilment, Konin Żagański"],
+    ["ID Logistics (USZO)", "ID Logistics, Magazyn w Zgorzelcu"],
+    ["SRG Global (Poland)", "RESRG Automotive, Bolesławiec"],
+    ["Toyota Boshoku Poland PT (PSTZ)", "Toyota Boshoku Poland"],
+    ["Toyota Boshoku Poland PT PL (PS)", "Toyota Boshoku Poland"],
+  ];
+  for (const [project, workplace] of projects) {
+    const record = { ...row, employee: { ...row.employee, project, projectId: `unchanged-${project}` } };
+    const before = JSON.stringify(record);
+    const summary = buildSickLeaveSummary(record);
+    assert.equal(summary.workplace, workplace);
+    assert.equal(summary.employer, "Ukrainian Service Sp. z o.o.");
+    assert.equal(JSON.stringify(record), before, "Project identity and source record must remain unchanged");
+    assert.equal(cleanPngWorkplace(project.toUpperCase()), workplace);
+  }
+});
+
+test("unmapped projects retain existing suffix cleanup", () => {
   assert.equal(cleanPngWorkplace("Toyota Boshoku Poland (PSTZ)"), "Toyota Boshoku Poland");
-  assert.equal(cleanPngWorkplace("ID Logistics (USZO)"), "ID Logistics");
-  assert.equal(cleanPngWorkplace("Cerland (Poland) (USZO)"), "Cerland (Poland)");
-  assert.equal(cleanPngWorkplace("SRG Global (Poland)"), "SRG Global (Poland)");
+  assert.equal(cleanPngWorkplace("Other Workplace (Poland) (USZO)"), "Other Workplace (Poland)");
+  assert.equal(cleanPngWorkplace("Other Workplace (Poland)"), "Other Workplace (Poland)");
   assert.equal(cleanPngWorkplace("USZO Logistics"), "USZO Logistics");
-  assert.equal(cleanPngWorkplace("Cerland (PS)"), "Cerland");
   assert.equal(cleanPngWorkplace("Bez projektu"), "Brak danych");
 });
 

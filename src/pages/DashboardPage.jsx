@@ -1159,7 +1159,7 @@ export function DashboardPage() {
                     <TableCell>Data od</TableCell>
                     <TableCell>Data do</TableCell>
                     <TableCell>Firma</TableCell>
-                    <TableCell aria-label="Pobierz PNG" sx={{ width: 48, px: 0.5 }} />
+                    <TableCell sx={{ width: 48, px: 0.5 }}>Kartka</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>

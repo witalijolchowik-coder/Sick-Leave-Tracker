@@ -12,6 +12,16 @@ const EMPLOYERS_BY_WORKSHEET = new Map([
   ["HCS", "Human Capital Service Sp. z o.o."],
   ["RENESANS", "Renesans"],
 ]);
+// Use the existing dashboard's imported-project-name selectors for PNG display
+// only. The more specific Toyota PL selector must precede the Toyota selector.
+const PNG_WORKPLACES = [
+  ["cerland", "Cerland Industry, Przejęsław"],
+  ["hermes fulfilment", "Hermes Fulfilment, Konin Żagański"],
+  ["id logistics", "ID Logistics, Magazyn w Zgorzelcu"],
+  ["srg global", "RESRG Automotive, Bolesławiec"],
+  ["toyota boshoku poland pt pl", "Toyota Boshoku Poland"],
+  ["toyota boshoku poland pt", "Toyota Boshoku Poland"],
+];
 // Workplace suffix cleanup remains separate from legal employer resolution.
 const PROJECT_SUFFIX = /(?:\s*\((?:(?:US|PS|PST)(?:Z[OPT]?)?|UZwPT)\)|\s+(?:(?:US|PS|PST)(?:Z[OPT]?)?|UZwPT))\s*$/iu;
 
@@ -23,6 +33,10 @@ const text = (value) => String(value ?? "")
 
 export const cleanPngWorkplace = (value) => {
   let workplace = text(value);
+  const verifiedWorkplace = PNG_WORKPLACES.find(([projectName]) =>
+    workplace.toLowerCase().includes(projectName),
+  );
+  if (verifiedWorkplace) return verifiedWorkplace[1];
   let previous;
   do {
     previous = workplace;
@@ -218,6 +232,9 @@ export const renderSickLeaveCard = (summary) => {
   context.fillStyle = "#21374a";
   drawLines(context, certificateLines, left, certificateTop + 30, 33);
   drawLines(context, issuedLines, rightColumn, certificateTop + 30, 33);
+  setFont(context, 14, 400);
+  context.fillStyle = "#536879";
+  context.fillText("Źródło danych: PUE ZUS", left, height - 56);
   return canvas;
 };
 
