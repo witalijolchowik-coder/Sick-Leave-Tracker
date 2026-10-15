@@ -39,7 +39,7 @@ test("summary keeps legal employer, workplace and certificate data separate and 
 });
 
 test("legacy and incomplete records never infer an employer or export a synthetic certificate or identity", () => {
-  const legacy = { ...row, certificate: `${row.id}-${row.start}-${row.end}`, employee: { project: "Toyota Boshoku Poland (PSTZ)" } };
+  const legacy = { ...row, companies: [], certificate: `${row.id}-${row.start}-${row.end}`, employee: { project: "Toyota Boshoku Poland (PSTZ)" } };
   assert.equal(buildSickLeaveSummary(legacy).employer, "Brak danych");
   assert.equal(buildSickLeaveSummary(legacy).certificate, "Brak danych");
   assert.equal(buildSickLeaveSummary({ ...legacy, employee: { fullName: row.id } }).employeeName, "Brak danych");
@@ -57,11 +57,31 @@ test("only recognized trailing project suffixes are removed", () => {
   assert.equal(cleanPngWorkplace("Bez projektu"), "Brak danych");
 });
 
-test("employer codes are never displayed as verified legal company names", () => {
-  for (const employerName of ["US", "PS", "PSTZ", "(USZO)"]) {
-    assert.equal(buildSickLeaveSummary({ ...row, employee: { ...row.employee, employerName } }).employer, "Brak danych");
+test("all confirmed ZUS worksheet names resolve to full legal employer names", () => {
+  const employers = {
+    US: "Ukrainian Service Sp. z o.o.",
+    PST: "Personnel Support Sp. z o.o.",
+    PS: "Personnel Service Sp. z o.o.",
+    HS: "Human Support Sp. z o.o.",
+    HCS: "Human Capital Service Sp. z o.o.",
+    RENESANS: "Renesans",
+  };
+  for (const [worksheet, employer] of Object.entries(employers)) {
+    const record = { ...row, companies: [worksheet], employee: { ...row.employee, employerName: "Ignored employee value", companies: ["PS"] } };
+    assert.equal(buildSickLeaveSummary(record).employer, employer);
+    assert.equal(buildSickLeaveSummary(JSON.parse(JSON.stringify(record))).employer, employer);
+    assert.equal(buildSickLeaveSummary({ ...record, companies: [` ${worksheet.toLowerCase()} `, worksheet] }).employer, employer);
+    const { employer: ignored, ...rest } = buildSickLeaveSummary(record);
+    const { employer: originalEmployer, ...originalRest } = buildSickLeaveSummary(row);
+    assert.deepEqual(rest, originalRest, "Only the employer field may change");
   }
-  assert.equal(buildSickLeaveSummary({ ...row, companies: ["CUSTOM"], employee: { ...row.employee, employerName: "CUSTOM" } }).employer, "Brak danych");
+});
+
+test("missing, unknown and conflicting worksheets never infer an employer from employee data", () => {
+  for (const companies of [undefined, [], [""], ["CUSTOM"], ["USZO"], ["PSTZ"], ["US", "PS"], ["US", "CUSTOM"]]) {
+    assert.equal(buildSickLeaveSummary({ ...row, companies }).employer, "Brak danych");
+  }
+  assert.equal(buildSickLeaveSummary({ ...row, employee: { project: "Toyota Boshoku Poland (PSTZ)" } }).employer, "Ukrainian Service Sp. z o.o.");
 });
 
 test("Unicode filenames use the individual certificate dates and remove invalid filename characters", () => {

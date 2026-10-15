@@ -3,8 +3,16 @@ const CARD_WIDTH = 1200;
 const MIN_CARD_HEIGHT = 675;
 const RENDER_SCALE = 2;
 const FONT_FAMILY = '"Segoe UI", Arial, sans-serif';
-// These are internal project suffixes, not a mapping to a legal employer.
-const INTERNAL_CODE = /^(?:(?:US|PS|PST)(?:Z[OPT]?)?|UZwPT)$/iu;
+// Confirmed legal employers keyed by the original ZUS worksheet name.
+const EMPLOYERS_BY_WORKSHEET = new Map([
+  ["US", "Ukrainian Service Sp. z o.o."],
+  ["PST", "Personnel Support Sp. z o.o."],
+  ["PS", "Personnel Service Sp. z o.o."],
+  ["HS", "Human Support Sp. z o.o."],
+  ["HCS", "Human Capital Service Sp. z o.o."],
+  ["RENESANS", "Renesans"],
+]);
+// Workplace suffix cleanup remains separate from legal employer resolution.
 const PROJECT_SUFFIX = /(?:\s*\((?:(?:US|PS|PST)(?:Z[OPT]?)?|UZwPT)\)|\s+(?:(?:US|PS|PST)(?:Z[OPT]?)?|UZwPT))\s*$/iu;
 
 const text = (value) => String(value ?? "")
@@ -24,15 +32,12 @@ export const cleanPngWorkplace = (value) => {
 };
 
 const employerName = (row) => {
-  const name = text(row?.employee?.employerName);
-  const code = name.replace(/^\(|\)$/gu, "");
-  const sourceCodes = [...(row?.companies || []), ...(row?.employee?.companies || [])];
-  // An explicit employer column can still contain a code. Preserve that source
-  // value in storage, but never present it as a verified legal name in the PNG.
-  const isSourceCode = /^[\p{L}\d_-]{1,12}$/u.test(code) && sourceCodes.some(
-    (value) => text(value).toLocaleUpperCase("pl") === code.toLocaleUpperCase("pl"),
-  );
-  return !name || INTERNAL_CODE.test(code) || isSourceCode ? MISSING : name;
+  // Leave companies are persisted ZUS worksheet names. Employee companies and
+  // project suffixes have different provenance and must not select an employer.
+  const worksheets = [...new Set((row?.companies || []).map((value) => text(value).toUpperCase()))];
+  // Deduplication can merge a certificate from several worksheets. Do not guess
+  // a single employer when its source worksheet is missing or ambiguous.
+  return worksheets.length === 1 ? EMPLOYERS_BY_WORKSHEET.get(worksheets[0]) || MISSING : MISSING;
 };
 
 export const formatPngDate = (value) => {
