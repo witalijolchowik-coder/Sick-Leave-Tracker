@@ -1,6 +1,5 @@
 import CloudDoneRoundedIcon from "@mui/icons-material/CloudDoneRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
-import ShieldRoundedIcon from "@mui/icons-material/ShieldRounded";
 import {
   AppBar,
   Avatar,
@@ -38,18 +37,15 @@ export function AppLayout() {
           >
             <Avatar
               variant="rounded"
+              src={`${import.meta.env.BASE_URL}icons/icon-192.png`}
+              alt="SickLeave"
               sx={{
                 bgcolor: "primary.main",
                 backgroundImage: "linear-gradient(145deg,#7C8CFF,#9B72F5)",
               }}
-            >
-              <ShieldRoundedIcon />
-            </Avatar>
+            />
             <Typography variant="h6" sx={{ flexGrow: 1 }}>
-              SickLeave{" "}
-              <Box component="span" sx={{ color: "text.secondary", fontWeight: 500 }}>
-                PRO
-              </Box>
+              SickLeave
             </Typography>
             <Tooltip title="Firebase Authentication i Firestore są skonfigurowane">
               <Chip

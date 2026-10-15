@@ -85,7 +85,7 @@ export function LoginPage() {
               <ShieldRoundedIcon fontSize="large" />
             </Avatar>
             <Box sx={{ textAlign: "center" }}>
-              <Typography variant="h4">SickLeave PRO</Typography>
+              <Typography variant="h4">SickLeave</Typography>
               <Typography color="text.secondary" variant="body2" sx={{ mt: 0.75 }}>
                 Zaloguj się, aby otworzyć monitoring zwolnień.
               </Typography>
