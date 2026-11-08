@@ -180,6 +180,7 @@ export const parseEmployeeFile = async (file) => {
   );
   const headers = (rows[headerRowIndex] || []).map(normalizeHeader);
   const indexes = {
+    productionNumber: findIndex(headers, ["nr produkcyjny pracownika"]),
     // Legal employer is only read from an explicit employee-source column.
     employerName: findIndex(headers, [
       "Nazwa pracodawcy",
@@ -223,13 +224,17 @@ export const parseEmployeeFile = async (file) => {
     if (!primaryId) return [];
     const lastName = cleanText(row[indexes.surname]);
     const firstName = cleanText(row[indexes.firstName]);
+    const project = normalizeProjectName(row[indexes.project]);
+    const productionNumber = cleanText(row[indexes.productionNumber]);
     return [{
       id: primaryId,
       aliases: [...new Set([pesel, passportAlias].filter(Boolean))],
       pesel,
       passport,
+      ...(project === "Hermes Fulfilment Sp. z o.o. UZwPT" &&
+        /^L\d+$/.test(productionNumber) && { productionNumber }),
       employerName: indexes.employerName >= 0 ? cleanText(row[indexes.employerName]) : "",
-      project: normalizeProjectName(row[indexes.project]),
+      project,
       rawProject: normalizeProject(row[indexes.project]),
       companies: projectCompanyCodes(row[indexes.project]),
       fullName: `${lastName} ${firstName}`.trim() || primaryId,
@@ -441,6 +446,7 @@ export const exportToyotaReport = (rows) => {
 export const exportHermesReport = (rows) => {
   const headers = [
     "Numer zwolnienia",
+    "Nr produkcyjny pracownika",
     "Imię",
     "Nazwisko",
     "Data wystawienia",
@@ -449,6 +455,7 @@ export const exportHermesReport = (rows) => {
   ];
   const data = rows.map((row) => [
     row.certificate || "",
+    row.employee.productionNumber || "",
     row.employee.firstName || "",
     row.employee.lastName || "",
     formatDisplayDate(row.issuedAt),
@@ -458,6 +465,7 @@ export const exportHermesReport = (rows) => {
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
   worksheet["!cols"] = [
     { wch: 20 },
+    { wch: 28 },
     { wch: 22 },
     { wch: 24 },
     { wch: 17 },

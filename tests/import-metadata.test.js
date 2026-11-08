@@ -216,8 +216,44 @@ test("legacy records keep real certificates and lack of employer data through re
   const restored = await service.loadCloudData();
   assert.equal(restored.activeEmployees[0].employerName, "");
   assert.equal(restored.archivedEmployees[0].employerName, "");
+  assert.equal(restored.activeEmployees[0].productionNumber, undefined);
+  assert.equal(restored.archivedEmployees[0].productionNumber, undefined);
   assert.equal(restored.sickLeaves[0].certificate, "LEGACY-REAL-CERT");
   assert.equal(restored.sickLeaves[1].certificate, legacySynthetic.certificate);
+});
+
+test("Hermes production numbers follow the matched PESEL through active and archive imports", async () => {
+  const { service } = await firestoreHarness();
+  const fixtures = [
+    ["pracownicy.xls", "01010100001", "L0002451"],
+    ["archiwum.xls", "02020200002", "L0000007"],
+  ];
+  for (const [filename, pesel, productionNumber] of fixtures) {
+    const [employee] = await data.parseEmployeeFile(workbookFile(filename, {
+      Employees: [
+        ["LP", "Obecność", "Nr produkcyjny pracownika ", "Nazwisko", "Imię", "PESEL"],
+        [1, "Hermes Fulfilment (USZO)", productionNumber, "Testowa", "Anna", pesel],
+      ],
+    }));
+    await service.replaceProjectEmployees({
+      projectName: employee.project,
+      archived: employee.archived,
+      records: [employee],
+    });
+  }
+  const { activeEmployees, archivedEmployees } = await service.loadCloudData();
+  const rows = data.searchSickLeaves({
+    employees: [...activeEmployees, ...archivedEmployees],
+    sickLeaves: fixtures.map(([, id]) => ({
+      id, certificate: `TEST-${id}`, start: "2026-10-12", end: "2026-10-13", companies: ["US"],
+    })),
+  });
+  assert.equal(rows.length, 2);
+  for (const [filename, pesel, productionNumber] of fixtures) {
+    const { employee } = rows.find((row) => row.id === pesel);
+    assert.equal(employee.productionNumber, productionNumber);
+    assert.equal(employee.archived, filename.includes("archiwum"));
+  }
 });
 
 test("RESRG keeps its current register, projects legacy history once and honors archived hides", async () => {
