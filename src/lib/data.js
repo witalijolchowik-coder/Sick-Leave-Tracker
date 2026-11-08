@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { RESRG_ID } from "./projectIdentity.js";
 
 const HEADER_SCAN_LIMIT = 15;
 
@@ -175,7 +176,7 @@ export const parseEmployeeFile = async (file) => {
     rows,
     (headers) =>
       headers.some((header) => header.includes("nazwisko")) &&
-      headers.some((header) => header === "pesel" || header.includes("paszportu")),
+      headers.some((header) => header === "pesel" || header.includes("paszport")),
   );
   const headers = (rows[headerRowIndex] || []).map(normalizeHeader);
   const indexes = {
@@ -202,8 +203,10 @@ export const parseEmployeeFile = async (file) => {
     ]),
     pesel: findIndex(headers, ["pesel", (header) => header.includes("pesel")]),
     passport: findIndex(headers, [
+      "paszport",
       (header) => header.includes("seria i numer paszportu"),
       (header) => header.includes("numer paszportu"),
+      (header) => header.includes("nr paszportu"),
     ]),
   };
 
@@ -214,14 +217,15 @@ export const parseEmployeeFile = async (file) => {
   const archived = normalizeHeader(file.name).includes("archiwum");
   return rows.slice(headerRowIndex + 1).flatMap((row, rowIndex) => {
     const pesel = indexes.pesel >= 0 ? normalizeId(row[indexes.pesel]) : "";
-    const passport = indexes.passport >= 0 ? normalizeId(row[indexes.passport]) : "";
-    const primaryId = pesel || passport;
+    const passport = indexes.passport >= 0 ? cleanText(row[indexes.passport]) : "";
+    const passportAlias = normalizeId(passport);
+    const primaryId = pesel || passportAlias;
     if (!primaryId) return [];
     const lastName = cleanText(row[indexes.surname]);
     const firstName = cleanText(row[indexes.firstName]);
     return [{
       id: primaryId,
-      aliases: [...new Set([pesel, passport].filter(Boolean))],
+      aliases: [...new Set([pesel, passportAlias].filter(Boolean))],
       pesel,
       passport,
       employerName: indexes.employerName >= 0 ? cleanText(row[indexes.employerName]) : "",
@@ -251,6 +255,9 @@ export const mergeEmployees = (records) => {
       keys.forEach((key) => seenActive.add(key));
       return true;
     }
+    // Historical snapshots can have different employer codes for the same person.
+    // Resolve these after checking the certificate's company, not during import.
+    if (employee.historicalOnly) return true;
     const projectKey = employee.projectId || normalizeHeader(employee.project);
     if (keys.some((key) => seenArchive.has(`${projectKey}::${key}`))) return false;
     keys.forEach((key) => seenArchive.add(`${projectKey}::${key}`));
@@ -353,15 +360,23 @@ export const searchSickLeaves = ({
     const activeCandidates = activeById.get(leave.id) || [];
     const archiveCandidates = archiveById.get(leave.id) || [];
     const activeProjectKeys = new Set(
-      activeCandidates.map((employee) => employee.projectId || normalizeHeader(employee.project)),
+      activeCandidates
+        .filter((employee) => employee.projectId !== RESRG_ID || employeeMatchesLeaveCompany(employee, leave))
+        .map((employee) => employee.projectId || normalizeHeader(employee.project)),
     );
+    let matchedResrg = false;
     [...activeCandidates, ...archiveCandidates].forEach((employee) => {
       if (project !== "all" && employee.project !== project) return;
+      if (leave.historyProjectId && employee.projectId !== leave.historyProjectId) return;
       if (!employeeMatchesLeaveCompany(employee, leave)) return;
       const archiveKey = employeeArchiveKey(employee);
       if (employee.archived && hiddenArchiveKeys.has(archiveKey)) return;
       const employeeProjectKey = employee.projectId || normalizeHeader(employee.project);
       if (employee.archived && activeProjectKeys.has(employeeProjectKey)) return;
+      if (employeeProjectKey === RESRG_ID) {
+        if (matchedResrg) return;
+        matchedResrg = true;
+      }
       results.push({
         ...leave,
         employee,
@@ -391,52 +406,10 @@ export const countWorkingDays = (startValue, endValue) => {
   return count;
 };
 
-const safeFilePart = (value) =>
+export const safeFilePart = (value) =>
   cleanText(value || "WSZYSTKIE")
     .replace(/[<>:"/\\|?*]+/g, "_")
     .slice(0, 80);
-
-export const exportAbsenceReport = (rows, hoursPerDay, project = "all") => {
-  const headers = [
-    "Nazwisko",
-    "Imię",
-    "Pesel",
-    "Rodzaj absencji",
-    "Skrót",
-    "OD",
-    "DO",
-    "Dni robocze",
-    "Godziny",
-    "Uwagi",
-  ];
-  const data = rows.map((row) => {
-    const workingDays = countWorkingDays(row.start, row.end);
-    const notes = [];
-    if (row.care) notes.push("opieka");
-    if (row.hospital) notes.push("szpital");
-    return [
-      row.employee.lastName.toUpperCase(),
-      row.employee.firstName.toUpperCase(),
-      row.employee.pesel || row.id,
-      "Godziny chorobowe (L4)",
-      "L4",
-      formatDisplayDate(row.start),
-      formatDisplayDate(row.end),
-      workingDays,
-      workingDays * hoursPerDay,
-      notes.join(", "),
-    ];
-  });
-  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
-  worksheet["!cols"] = [
-    { wch: 22 }, { wch: 22 }, { wch: 14 }, { wch: 27 }, { wch: 8 },
-    { wch: 13 }, { wch: 13 }, { wch: 14 }, { wch: 10 }, { wch: 18 },
-  ];
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Absencje");
-  const projectName = project === "all" ? "WSZYSTKIE" : safeFilePart(project);
-  XLSX.writeFile(workbook, `Raport_Absencja_${projectName}.xlsx`);
-};
 
 export const exportToyotaReport = (rows) => {
   const headers = [

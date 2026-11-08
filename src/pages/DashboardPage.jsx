@@ -39,10 +39,12 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useOutletContext } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { exportAbsenceReport } from "../lib/absenceReport";
+import { isLegacySrg, isResrgWorkplace, RESRG_NAME } from "../lib/projectIdentity";
 import { downloadSickLeavePng } from "../lib/sickLeavePng";
 import {
-  exportAbsenceReport,
   exportHermesReport,
   exportToyotaReport,
   formatDisplayDate,
@@ -53,6 +55,7 @@ import {
   searchSickLeaves,
 } from "../lib/data";
 import {
+  createProjectId,
   hideArchivedEmployeeSickLeaves,
   loadCloudData,
   replaceProjectEmployees,
@@ -111,7 +114,7 @@ const projectAccent = (project, fallbackIndex) => {
   const normalized = project.toLowerCase();
   if (normalized.includes("cerland")) return "#7C8CFF";
   if (normalized.includes("id logistics")) return "#22D3A2";
-  if (normalized.includes("srg global")) return "#FF6B86";
+  if (isResrgWorkplace(project)) return "#FF6B86";
   if (normalized.includes("toyota boshoku poland pt pl")) return "#F6C85F";
   if (normalized.includes("toyota boshoku poland pt")) return "#38BDF8";
   if (normalized.includes("hermes fulfilment")) return "#A78BFA";
@@ -123,7 +126,7 @@ const projectDisplayName = (project) => {
   if (normalized.includes("cerland")) return "CERLAND";
   if (normalized.includes("hermes fulfilment")) return "HERMES";
   if (normalized.includes("id logistics")) return "ID LOGISTICS";
-  if (normalized.includes("srg global")) return "SRG";
+  if (isResrgWorkplace(project)) return "RESRG";
   if (normalized.includes("toyota boshoku poland pt pl")) return "TOYOTA PL";
   if (normalized.includes("toyota boshoku poland pt")) return "TOYOTA";
   return project;
@@ -579,9 +582,11 @@ function NewsFeed({ events, projectStats }) {
 
 export function DashboardPage() {
   const { user } = useAuth();
+  const { hiddenProjects, setVisibilityProjects } = useOutletContext();
   const defaults = useMemo(monthRange, []);
   const [employees, setEmployees] = useState([]);
   const [sickLeaves, setSickLeaves] = useState([]);
+  const [historicalSickLeaves, setHistoricalSickLeaves] = useState([]);
   const [newsEvents, setNewsEvents] = useState([]);
   const [hiddenArchiveKeys, setHiddenArchiveKeys] = useState(new Set());
   const [cloudProjects, setCloudProjects] = useState([]);
@@ -603,6 +608,7 @@ export function DashboardPage() {
         mergeEmployees([...cloud.activeEmployees, ...cloud.archivedEmployees]),
       );
       setSickLeaves(cloud.sickLeaves);
+      setHistoricalSickLeaves(cloud.historicalSickLeaves || []);
       setNewsEvents(cloud.newsEvents || []);
       setHiddenArchiveKeys(cloud.hiddenArchiveKeys || new Set());
       setCloudProjects(cloud.projects);
@@ -652,31 +658,34 @@ export function DashboardPage() {
   );
 
   const previousRange = useMemo(() => previousPeriod(dateRange), [dateRange]);
+  const searchableSickLeaves = useMemo(
+    () => [...sickLeaves, ...historicalSickLeaves], [sickLeaves, historicalSickLeaves],
+  );
 
   const currentPeriodRows = useMemo(
     () =>
       searchSickLeaves({
         employees,
-        sickLeaves,
+        sickLeaves: searchableSickLeaves,
         project: "all",
         dateStart: dateRange.start,
         dateEnd: dateRange.end,
         hiddenArchiveKeys,
       }),
-    [employees, sickLeaves, dateRange, hiddenArchiveKeys],
+    [employees, searchableSickLeaves, dateRange, hiddenArchiveKeys],
   );
 
   const previousPeriodRows = useMemo(
     () =>
       searchSickLeaves({
         employees,
-        sickLeaves,
+        sickLeaves: searchableSickLeaves,
         project: "all",
         dateStart: previousRange.start,
         dateEnd: previousRange.end,
         hiddenArchiveKeys,
       }),
-    [employees, sickLeaves, previousRange, hiddenArchiveKeys],
+    [employees, searchableSickLeaves, previousRange, hiddenArchiveKeys],
   );
 
   const projectStats = useMemo(
@@ -691,6 +700,7 @@ export function DashboardPage() {
         );
         return {
           project,
+          id: cloudProject?.projectId || cloudProject?.id || createProjectId(project),
           employeeCount: employees.filter(
             (employee) => !employee.archived && employee.project === project,
           ).length,
@@ -704,10 +714,15 @@ export function DashboardPage() {
     [projects, currentPeriodRows, previousPeriodRows, employees, cloudProjects],
   );
 
-  const visibleProjectStats =
-    selectedProject === "all"
-      ? projectStats
-      : projectStats.filter((stats) => stats.project === selectedProject);
+  useEffect(() => {
+    setVisibilityProjects(projects.map((project) => {
+      const stored = cloudProjects.find((item) => item.projectName === project);
+      return { id: stored?.projectId || stored?.id || createProjectId(project), name: projectDisplayName(project) };
+    }));
+  }, [cloudProjects, projects, setVisibilityProjects]);
+
+  const visibleProjectStats = projectStats.filter((stats) =>
+    !hiddenProjects[stats.id] && (selectedProject === "all" || stats.project === selectedProject));
   const visibleNewsEvents =
     (selectedProject === "all"
       ? [...newsEvents]
@@ -751,10 +766,12 @@ export function DashboardPage() {
       const importGroups = new Map();
       parsedFiles.forEach(({ file, records }) => {
         records.forEach((record) => {
-          const key = `${record.archived ? "archive" : "active"}::${record.project}`;
+          const projectName = isResrgWorkplace(record.project) && !isLegacySrg(record.project)
+            ? RESRG_NAME : record.project;
+          const key = `${record.archived ? "archive" : "active"}::${projectName}`;
           if (!importGroups.has(key)) {
             importGroups.set(key, {
-              projectName: record.project,
+              projectName,
               archived: record.archived,
               records: [],
               sourceFiles: new Set(),
@@ -827,7 +844,7 @@ export function DashboardPage() {
   };
 
   const runSearch = () => {
-    if (!employees.length || !sickLeaves.length) {
+    if (!employees.length || !searchableSickLeaves.length) {
       setMessage({ severity: "warning", text: "Najpierw wczytaj oba źródła danych." });
       return;
     }
@@ -839,7 +856,7 @@ export function DashboardPage() {
     window.setTimeout(() => {
       const found = searchSickLeaves({
         employees,
-        sickLeaves,
+        sickLeaves: searchableSickLeaves,
         project: selectedProject,
         dateStart: dateRange.start,
         dateEnd: dateRange.end,
@@ -855,6 +872,15 @@ export function DashboardPage() {
       });
       setBusy("");
     }, 100);
+  };
+
+  const downloadAbsenceReport = async () => {
+    try {
+      const exported = await exportAbsenceReport(selectedRows, hours, selectedProject, dateRange);
+      if (!exported) setMessage({ severity: "info", text: "Brak wybranych zwolnień dla tego projektu i zakresu dat." });
+    } catch (error) {
+      setMessage({ severity: "error", text: `Nie udało się pobrać raportu: ${error.message}` });
+    }
   };
 
   const hideArchiveRow = async (row) => {
@@ -978,7 +1004,7 @@ export function DashboardPage() {
                     xs: "1fr",
                     sm: "repeat(2,minmax(0,1fr))",
                     lg: "repeat(3,minmax(0,1fr))",
-                    xl: "repeat(6,minmax(0,1fr))",
+                    xl: `repeat(${Math.min(visibleProjectStats.length, 6)},minmax(0,1fr))`,
                   }
                 : { xs: "1fr", sm: "minmax(280px,480px)" },
             gap: 1,
@@ -1096,7 +1122,7 @@ export function DashboardPage() {
                 size="small"
                 startIcon={<DownloadRoundedIcon />}
                 disabled={!selectedRows.length}
-                onClick={() => exportAbsenceReport(selectedRows, hours, selectedProject)}
+                onClick={downloadAbsenceReport}
               >
                 Absencja XLS ({selectedRows.length})
               </Button>

@@ -19,6 +19,7 @@ const PNG_WORKPLACES = [
   ["hermes fulfilment", "Hermes Fulfilment, Konin Żagański"],
   ["id logistics", "ID Logistics, Magazyn w Zgorzelcu"],
   ["srg global", "RESRG Automotive, Bolesławiec"],
+  ["resrg automotive", "RESRG Automotive, Bolesławiec"],
   ["toyota boshoku poland pt pl", "Toyota Boshoku Poland"],
   ["toyota boshoku poland pt", "Toyota Boshoku Poland"],
 ];

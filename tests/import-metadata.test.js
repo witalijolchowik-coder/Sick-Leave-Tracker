@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 import * as XLSX from "xlsx";
 import * as data from "../src/lib/data.js";
+import * as projectIdentity from "../src/lib/projectIdentity.js";
 
 const workbookFile = (name, sheets) => {
   const workbook = XLSX.utils.book_new();
@@ -116,6 +117,12 @@ const firestoreHarness = async () => {
         commit: async () => mutations.forEach((mutation) => mutation()),
       };
     },
+    runTransaction: async (_db, update) => {
+      const batch = firestore.writeBatch();
+      const value = await update({ ...batch, get: firestore.getDoc });
+      await batch.commit();
+      return value;
+    },
   };
   const context = vm.createContext({ console });
   const moduleFrom = (exports) => new vm.SyntheticModule(Object.keys(exports), function () {
@@ -125,6 +132,7 @@ const firestoreHarness = async () => {
     "firebase/firestore": moduleFrom(firestore),
     "../config/firebase": moduleFrom({ db: { path: "" } }),
     "../lib/data": moduleFrom(data),
+    "../lib/projectIdentity.js": moduleFrom(projectIdentity),
   };
   const source = await readFile(new URL("../src/services/firestoreData.js", import.meta.url), "utf8");
   const service = new vm.SourceTextModule(source, { context });
@@ -210,4 +218,52 @@ test("legacy records keep real certificates and lack of employer data through re
   assert.equal(restored.archivedEmployees[0].employerName, "");
   assert.equal(restored.sickLeaves[0].certificate, "LEGACY-REAL-CERT");
   assert.equal(restored.sickLeaves[1].certificate, legacySynthetic.certificate);
+});
+
+test("RESRG keeps its current register, projects legacy history once and honors archived hides", async () => {
+  const { service, documents } = await firestoreHarness();
+  const { RESRG_ID, LEGACY_SRG_ID, RESRG_NAME } = projectIdentity;
+  const oldName = "SRG GLOBAL BOLESŁAWIEC SP. Z O.O. UZwPT (USZO)";
+  documents.set(`projects/${LEGACY_SRG_ID}`, { projectId: LEGACY_SRG_ID, projectName: oldName, activeVersion: "old", archivedVersion: "old" });
+  const record = (id) => ({ id, aliases: [id], pesel: id, passport: "00042", firstName: "Jan", lastName: "Testowy", companies: ["US"] });
+  const legacy = (id) => ({ ...record(id), employeeId: id, projectId: LEGACY_SRG_ID, projectName: oldName, version: "old" });
+  documents.set("employees/legacy-overlap", legacy("OVERLAP"));
+  documents.set("employees/legacy-only", legacy("LEGACY"));
+  documents.set("employeeArchives/legacy-overlap", legacy("OVERLAP"));
+  documents.set("employeeArchives/legacy-hidden", legacy("HIDDEN"));
+  documents.set("hiddenArchiveSickLeaves/legacy-hidden", { archiveKey: `${LEGACY_SRG_ID}::HIDDEN` });
+  documents.set("newsEvents/legacy-news", { projectId: LEGACY_SRG_ID, projectName: oldName });
+  await service.replaceProjectEmployees({ projectName: RESRG_NAME, records: [record("OVERLAP")], archived: false });
+  await service.replaceProjectEmployees({ projectName: "RESRG", records: [record("LEGACY")], archived: true });
+  await service.replaceProjectEmployees({ projectName: oldName, records: [record("HISTORIC-IMPORT")], archived: false });
+  const leave = (id) => ({ id, start: "2026-10-12", end: "2026-10-15", certificate: `TEST-${id}`, companies: ["US"] });
+  const latest = ["OVERLAP", "LEGACY", "HIDDEN", "HISTORIC-IMPORT"].map(leave);
+  await service.replaceSickLeaves({ records: latest });
+  const cloud = await service.loadCloudData();
+  assert.deepEqual(Array.from(cloud.projects, (project) => project.projectId), [RESRG_ID]);
+  assert.deepEqual(Array.from(cloud.activeEmployees, (employee) => employee.id), ["OVERLAP"]);
+  assert.equal(cloud.newsEvents[0].projectName, RESRG_NAME);
+  const employees = data.mergeEmployees([...cloud.activeEmployees, ...cloud.archivedEmployees]);
+  const search = (current, history = []) => data.searchSickLeaves({ employees, sickLeaves: [...current, ...history], hiddenArchiveKeys: cloud.hiddenArchiveKeys, project: RESRG_NAME });
+  const results = search(cloud.sickLeaves);
+  assert.deepEqual(results.map((row) => row.id).sort(), ["HISTORIC-IMPORT", "LEGACY", "OVERLAP"]);
+  assert.equal(results.find((row) => row.id === "OVERLAP").employee.archived, false);
+  assert.equal(results.find((row) => row.id === "LEGACY").employee.historicalOnly, undefined);
+  await service.replaceSickLeaves({ records: [leave("OVERLAP")], employees });
+  const reload = await service.loadCloudData();
+  assert.equal(reload.sickLeaves.length, 1);
+  assert.equal(reload.historicalSickLeaves.length, 3);
+  assert.equal(search(reload.sickLeaves, reload.historicalSickLeaves).length, 3);
+  assert.equal(documents.has(`projects/${LEGACY_SRG_ID}`), true);
+  assert.equal(documents.has("employees/legacy-only"), true);
+});
+
+test("visibility writes use separate user documents and leave the shared dataset pointer intact", async () => {
+  const { service, documents } = await firestoreHarness();
+  documents.set("appState/current", { sickLeavesVersion: "shared" });
+  await service.saveProjectVisibility("fixture-a", "cerland", true);
+  await service.saveProjectVisibility("fixture-b", "cerland", false);
+  assert.deepEqual(documents.get("appState/projectVisibility_fixture-a"), { hiddenProjects: { cerland: true } });
+  assert.deepEqual(documents.get("appState/projectVisibility_fixture-b"), { hiddenProjects: { cerland: false } });
+  assert.deepEqual(documents.get("appState/current"), { sickLeavesVersion: "shared" });
 });

@@ -7,6 +7,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   where,
@@ -18,10 +19,12 @@ import {
   employeeMatchesLeaveCompany,
   projectCompanyCodes,
 } from "../lib/data";
+import { isLegacySrg, isResrgWorkplace, LEGACY_SRG_ID, RESRG_ID, RESRG_NAME } from "../lib/projectIdentity.js";
 
 const WRITE_BATCH_SIZE = 400;
 const SICK_LEAVE_CHUNK_SIZE = 200;
 const STATE_DOCUMENT = doc(db, "appState", "current");
+const RESRG_LEAVE_HISTORY = "resrg-history";
 
 const chunks = (items, size) => {
   const result = [];
@@ -175,7 +178,7 @@ const buildSickLeaveEvents = ({
       type: type === "new" && activeOnImport ? "started" : type,
       employeeId: record.id,
       employeeName: employee.fullName || record.sourceName || record.id,
-      projectId: createProjectId(employee.project),
+      projectId: employee.projectId || createProjectId(employee.project),
       projectName: employee.project,
       start: record.start,
       end: record.end,
@@ -218,12 +221,17 @@ const cleanupNewsEvents = async () => {
   if (stale.length) await commitDeletes(stale);
 };
 
-const cleanupProjectVersion = async (collectionName, projectId, currentVersion) => {
+const cleanupProjectVersion = async (collectionName, projectId, currentVersion, previousVersion) => {
   const snapshot = await getDocs(
     query(collection(db, collectionName), where("projectId", "==", projectId)),
   );
   const stale = snapshot.docs
-    .filter((snapshotDoc) => snapshotDoc.data().version !== currentVersion)
+    .filter((snapshotDoc) => {
+      const data = snapshotDoc.data();
+      return !data.historicalOnly && (previousVersion === undefined
+        ? data.version !== currentVersion
+        : data.version === previousVersion);
+    })
     .map((snapshotDoc) => snapshotDoc.ref);
   if (stale.length) await commitDeletes(stale);
 };
@@ -235,7 +243,10 @@ export async function replaceProjectEmployees({
   user,
   sourceFileName,
 }) {
-  const projectId = createProjectId(projectName);
+  const unifiedProject = isResrgWorkplace(projectName);
+  const historicalOnly = isLegacySrg(projectName);
+  const projectId = unifiedProject ? RESRG_ID : createProjectId(projectName);
+  if (unifiedProject) projectName = RESRG_NAME;
   const version = newVersion();
   const collectionName = archived ? "employeeArchives" : "employees";
   const importType = archived ? "archivedEmployees" : "activeEmployees";
@@ -250,7 +261,10 @@ export async function replaceProjectEmployees({
         collectionName,
         `${projectId}__${version}__${safeDocPart(employee.id)}`,
       ),
-      data: employeePayload(employee, projectId, projectName, version, archived),
+      data: {
+        ...employeePayload(employee, projectId, projectName, version, archived),
+        ...(historicalOnly && { historicalOnly: true }),
+      },
     })),
   );
 
@@ -269,18 +283,8 @@ export async function replaceProjectEmployees({
       };
 
   const importReference = doc(collection(db, "imports"));
-  const batch = writeBatch(db);
-  batch.set(
-    doc(db, "projects", projectId),
-    {
-      projectId,
-      projectName,
-      updatedAt: serverTimestamp(),
-      ...projectUpdate,
-    },
-    { merge: true },
-  );
-  batch.set(importReference, {
+  const projectReference = doc(db, "projects", projectId);
+  const importData = {
     projectId,
     projectName,
     type: importType,
@@ -288,11 +292,33 @@ export async function replaceProjectEmployees({
     recordCount: uniqueRecords.length,
     sourceFileName: sourceFileName || "",
     version,
+    ...(historicalOnly && { historicalOnly: true }),
     ...userFields(user),
-  });
-  await batch.commit();
-
-  await cleanupProjectVersion(collectionName, projectId, version);
+  };
+  const publish = (writer) => {
+    writer.set(projectReference, {
+      projectId,
+      projectName,
+      updatedAt: serverTimestamp(),
+      ...(!historicalOnly && projectUpdate),
+    }, { merge: true });
+    writer.set(importReference, importData);
+  };
+  if (unifiedProject && !historicalOnly) {
+    // Delete only the version this import replaced. Another device may be
+    // staging a newer snapshot under the same canonical project ID.
+    const previousVersion = await runTransaction(db, async (transaction) => {
+      const snapshot = await transaction.get(projectReference);
+      publish(transaction);
+      return snapshot.data()?.[archived ? "archivedVersion" : "activeVersion"];
+    });
+    if (previousVersion) await cleanupProjectVersion(collectionName, projectId, version, previousVersion);
+  } else {
+    const batch = writeBatch(db);
+    publish(batch);
+    await batch.commit();
+    if (!historicalOnly) await cleanupProjectVersion(collectionName, projectId, version);
+  }
 
   return {
     projectId,
@@ -330,6 +356,16 @@ export async function replaceSickLeaves({
     employees,
     version,
   });
+
+  // Keep the outgoing RESRG certificates before the global dataset is replaced.
+  // The same certificate key overwrites its older copy, including cancellations.
+  const resrgEmployees = employeeLookup(employees.filter((employee) => employee.projectId === RESRG_ID));
+  const outgoingResrg = new Map(previousRecords.filter((record) =>
+    selectEmployeeForLeaveEvent(resrgEmployees, record)).map((record) => [leaveKey(record), record]));
+  await commitSets([...outgoingResrg].map(([key, record]) => ({
+      reference: doc(db, "sickLeaves", RESRG_LEAVE_HISTORY, "chunks", encodeURIComponent(key)),
+      data: { records: [record] },
+  })));
 
   await commitSets(
     recordChunks.map((chunkRecords, index) => ({
@@ -451,14 +487,36 @@ export async function loadCloudData() {
       ),
     ]);
 
-  const projects = projectsSnapshot.docs.map((snapshotDoc) => ({
+  const storedProjects = projectsSnapshot.docs.map((snapshotDoc) => ({
     id: snapshotDoc.id,
     ...snapshotDoc.data(),
   }));
-  const projectById = new Map(projects.map((project) => [project.projectId, project]));
+  const projectById = new Map(storedProjects.map((project) => [project.projectId || project.id, project]));
+  const legacyProject = projectById.get(LEGACY_SRG_ID);
+  const canonicalProject = projectById.get(RESRG_ID);
+  const projects = storedProjects.filter((project) => project.id !== LEGACY_SRG_ID);
+  if (legacyProject && !canonicalProject) {
+    projects.push({ id: RESRG_ID, projectId: RESRG_ID, projectName: RESRG_NAME });
+  }
+
+  const historicalEmployees = [];
+  const projectName = canonicalProject?.projectName || RESRG_NAME;
+  const restoreHistoricalEmployee = (data, archived) => {
+    const employee = restoreEmployee(data, true);
+    historicalEmployees.push({
+      ...employee, projectId: RESRG_ID, project: projectName,
+      legacyArchiveKey: data.projectId === LEGACY_SRG_ID ? employeeArchiveKey(employee) : "",
+      historicalOnly: true,
+      ...(archived && { fromArchiveSnapshot: true }),
+    });
+  };
 
   const activeEmployees = employeesSnapshot.docs.flatMap((snapshotDoc) => {
     const data = snapshotDoc.data();
+    if (data.projectId === LEGACY_SRG_ID || data.historicalOnly) {
+      restoreHistoricalEmployee(data, false);
+      return [];
+    }
     const project = projectById.get(data.projectId);
     return project?.activeVersion === data.version
       ? [restoreEmployee(data, false)]
@@ -466,6 +524,10 @@ export async function loadCloudData() {
   });
   const archivedEmployees = archivesSnapshot.docs.flatMap((snapshotDoc) => {
     const data = snapshotDoc.data();
+    if (data.projectId === LEGACY_SRG_ID || data.historicalOnly) {
+      restoreHistoricalEmployee(data, true);
+      return [];
+    }
     const project = projectById.get(data.projectId);
     return project?.archivedVersion === data.version
       ? [restoreEmployee(data, true)]
@@ -473,25 +535,40 @@ export async function loadCloudData() {
   });
 
   const state = stateSnapshot.exists() ? stateSnapshot.data() : {};
-  let sickLeaves = [];
-  if (state.sickLeavesVersion) {
-    sickLeaves = await loadSickLeaveDataset(state.sickLeavesVersion);
+  const [sickLeaves, retainedLeaves] = await Promise.all([
+    loadSickLeaveDataset(state.sickLeavesVersion),
+    canonicalProject || legacyProject ? loadSickLeaveDataset(RESRG_LEAVE_HISTORY) : [],
+  ]);
+  const currentKeys = new Set(sickLeaves.map(leaveKey));
+  const hiddenArchiveKeys = new Set(hiddenArchiveSnapshot.docs.map(
+    (snapshotDoc) => snapshotDoc.data().archiveKey || snapshotDoc.id,
+  ));
+  // A legacy hide applies to the same archived identity under the canonical ID.
+  const hiddenLegacyAliases = new Set(historicalEmployees.filter(
+    (employee) => employee.legacyArchiveKey && hiddenArchiveKeys.has(employee.legacyArchiveKey),
+  ).flatMap((employee) => employee.aliases));
+  for (const employee of [...archivedEmployees, ...historicalEmployees]) {
+    if (employee.projectId === RESRG_ID && employee.aliases.some((alias) => hiddenLegacyAliases.has(alias))) {
+      hiddenArchiveKeys.add(employeeArchiveKey(employee));
+    }
   }
 
   return {
     activeEmployees,
-    archivedEmployees,
+    archivedEmployees: [...archivedEmployees, ...historicalEmployees.sort(
+      (left, right) => Number(Boolean(right.fromArchiveSnapshot)) - Number(Boolean(left.fromArchiveSnapshot)),
+    )],
     projects,
     sickLeaves,
-    hiddenArchiveKeys: new Set(
-      hiddenArchiveSnapshot.docs.map(
-        (snapshotDoc) => snapshotDoc.data().archiveKey || snapshotDoc.id,
-      ),
-    ),
-    newsEvents: newsSnapshot.docs.map((snapshotDoc) => ({
-      id: snapshotDoc.id,
-      ...snapshotDoc.data(),
-    })),
+    historicalSickLeaves: retainedLeaves.filter((record) => !currentKeys.has(leaveKey(record)))
+      .map((record) => ({ ...record, historyProjectId: RESRG_ID })),
+    hiddenArchiveKeys,
+    newsEvents: newsSnapshot.docs.map((snapshotDoc) => {
+      const event = snapshotDoc.data();
+      return event.projectId === LEGACY_SRG_ID || isLegacySrg(event.projectName)
+        ? { ...event, id: snapshotDoc.id, projectId: RESRG_ID, projectName }
+        : { ...event, id: snapshotDoc.id };
+    }),
     state,
   };
 }
@@ -517,6 +594,18 @@ export async function hideArchivedEmployeeSickLeaves({ employee, user }) {
     { merge: true },
   );
   return archiveKey;
+}
+
+const projectVisibilityDoc = (uid) => doc(db, "appState", `projectVisibility_${uid}`);
+
+export function subscribeToProjectVisibility(uid, onChange, onError) {
+  return onSnapshot(projectVisibilityDoc(uid), (snapshot) => {
+    onChange(snapshot.data()?.hiddenProjects || {});
+  }, onError);
+}
+
+export function saveProjectVisibility(uid, projectId, hidden) {
+  return setDoc(projectVisibilityDoc(uid), { hiddenProjects: { [projectId]: hidden } }, { merge: true });
 }
 
 export function subscribeToCloudChanges(onChange, onError) {
