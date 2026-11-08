@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 import { getHermesProject, getSaintGobainProject, projectVariant, RESRG_ID } from "./projectIdentity.js";
 
-const HEADER_SCAN_LIMIT = 15;
+const EMPLOYEE_HEADER_SCAN_LIMIT = 15;
 
 export const cleanText = (value) =>
   String(value ?? "")
@@ -128,8 +128,8 @@ const parseDateRange = (value) => {
   return start && end ? { start, end } : null;
 };
 
-const findHeaderRow = (rows, predicate) => {
-  const limit = Math.min(rows.length, HEADER_SCAN_LIMIT);
+const findHeaderRow = (rows, predicate, scanLimit = rows.length) => {
+  const limit = Math.min(rows.length, scanLimit);
   for (let index = 0; index < limit; index += 1) {
     const headers = (rows[index] || []).map(normalizeHeader);
     if (predicate(headers)) return index;
@@ -174,6 +174,7 @@ export const parseEmployeeFile = async (file) => {
     (headers) =>
       headers.some((header) => header.includes("nazwisko")) &&
       headers.some((header) => header === "pesel" || header.includes("paszport")),
+    EMPLOYEE_HEADER_SCAN_LIMIT,
   );
   const headers = (rows[headerRowIndex] || []).map(normalizeHeader);
   const indexes = {

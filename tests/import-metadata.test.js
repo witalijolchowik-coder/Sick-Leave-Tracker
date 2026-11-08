@@ -69,6 +69,46 @@ test("ZUS imports preserve original numbers and issue dates without altering fal
   assert.equal(merged[0].certificate, "TEST-CERT-01");
 });
 
+test("ZUS import finds real headers after introductory rows and gaps anywhere in a worksheet", async () => {
+  const pesel = "01010100001";
+  const intro = (length) => Array.from({ length }, (_, index) => {
+    if (index === 0) return ["Wprowadzenie"];
+    if (index === 14) return ["Dokument tożsamości"];
+    return [];
+  });
+  const headers = [...leaveHeaders, "Status"];
+  const row = (certificate, dates, status = "") =>
+    [certificate, "Test Employee", pesel, "30.09.2026", dates, status];
+  const names = ["US", "RENESANS", "PST", "PS", "HCS"];
+  const sheets = Object.fromEntries(names.map((name) => [
+    name, [headers, row("TEST-" + name, "01.10.2026 - 02.10.2026")],
+  ]));
+  sheets.HS = [...intro(31), headers,
+    row("TEST-HS-START", "29.09.2026 - 01.10.2026"),
+    row("TEST-HS-END", "31.10.2026 - 02.11.2026"),
+    row("TEST-HS-CANCELLED", "10.10.2026 - 20.10.2026", "Anulowane"),
+    row("TEST-HS-OUTSIDE", "01.11.2026 - 02.11.2026"),
+  ];
+  sheets.Deep = [...intro(80), headers, row("TEST-DEEP", "01.10.2026 - 02.10.2026")];
+  sheets.Notes = [["Niezdolność do pracy"], ["Wprowadzenie"]];
+  const records = await data.parseSickLeaveFile(workbookFile("fixture.xlsx", sheets));
+  for (const name of names) {
+    assert.deepEqual(records.find(({ certificate }) => certificate === "TEST-" + name).companies, [name]);
+  }
+  assert.deepEqual(records.find(({ certificate }) => certificate === "TEST-DEEP").companies, ["Deep"]);
+  assert.equal(records.find(({ certificate }) => certificate === "TEST-HS-START").sourceRow, 33);
+  assert.equal(records.some(({ companies }) => companies.includes("Notes")), false);
+  const project = "Saint-Gobain PT PL (HSZO)";
+  const results = data.searchSickLeaves({
+    employees: [{ id: pesel, pesel, aliases: [pesel], fullName: "Test Employee", project, companies: ["HS"] }],
+    sickLeaves: records, project, dateStart: "2026-10-01", dateEnd: "2026-10-31",
+  });
+  assert.deepEqual(results.map(({ certificate, start, end }) => [certificate, start, end]), [
+    ["TEST-HS-END", "2026-10-31", "2026-11-02"],
+    ["TEST-HS-START", "2026-09-29", "2026-10-01"],
+  ]);
+});
+
 // Exercise the real Firestore service with an isolated, in-memory transport.
 // No Firebase app, credentials, or remote database is used by these tests.
 const firestoreHarness = async ({ beforeBatch = async () => {}, beforeTransaction = async () => {} } = {}) => {
