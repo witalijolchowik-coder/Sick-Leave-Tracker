@@ -470,3 +470,38 @@ test("HERMES and HERMES PL publish separate registers, archives, workspace entri
   assert.equal(updated.sickLeaves.length, 1);
   assert.deepEqual(Array.from(updated.newsEvents, (event) => event.projectId).sort(), [a.projectId, b.projectId].sort());
 });
+
+test("Saint-Gobain imports replace only their own version, with separate workspace visibility", async () => {
+  const { service, documents } = await firestoreHarness();
+  const regular = "Saint-Gobain Sekurit Polska Sp. z o.o. oddział Konin Żagański PT (HSZO)";
+  const polish = regular.replace("PT (HSZO)", "PT PL (HSZO)");
+  const upload = async (project, uid, pesel, archived = false) => {
+    const records = await data.parseEmployeeFile(workbookFile(archived ? "archiwum.xls" : "identical-name.xls", {
+      Register: [["Obecność", "Nazwisko", "Imię", "PESEL"], [project, "Testowa", "Anna", pesel]],
+    }));
+    assert.deepEqual(records[0].companies, ["HS"]);
+    return service.replaceProjectEmployees({ projectName: records[0].project, records, archived, user: { uid } });
+  };
+  const a = await upload(regular, "a", "01010100001");
+  const b = await upload(polish, "b", "01010100001");
+  assert.equal(a.projectId, "saint-gobain-sekurit-polska-sp-z-o-o-oddzia-konin-zaganski-pt-hszo-1774ymb");
+  assert.notEqual(a.projectId, b.projectId);
+  await upload(regular, "a", "02020200002", true);
+  await upload(polish, "b", "03030300003", true);
+  const before = await service.loadCloudData();
+  const project = (cloud, id) => cloud.projects.find((item) => item.projectId === id);
+  assert.equal((await upload(polish, "b", "04040400004")).projectId, b.projectId);
+  const afterPL = await service.loadCloudData();
+  assert.deepEqual(project(afterPL, a.projectId), project(before, a.projectId));
+  assert.equal((await upload(regular, "a", "05050500005")).projectId, a.projectId);
+  const after = await service.loadCloudData();
+  assert.deepEqual(project(after, b.projectId), project(afterPL, b.projectId));
+  assert.equal(after.activeEmployees.length, 2);
+  assert.equal(after.archivedEmployees.length, 2);
+  await service.setWorkspaceProject("a", b.projectId, true);
+  await service.saveProjectVisibility("a", b.projectId, true);
+  const preferences = documents.get("userSettings/a");
+  assert.deepEqual(preferences.hiddenProjects, { [b.projectId]: true });
+  assert.equal(scopeWorkspace(after.projects, after.activeEmployees, [], preferences.workspaceProjects).projects.length, 2);
+  assert.equal(Object.keys(documents.get("userSettings/b").workspaceProjects).length, 1);
+});

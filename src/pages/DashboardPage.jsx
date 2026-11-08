@@ -42,7 +42,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { exportAbsenceReport } from "../lib/absenceReport";
-import { getHermesProject, isLegacySrg, isResrgWorkplace, RESRG_NAME } from "../lib/projectIdentity";
+import { getHermesProject, getSaintGobainProject, isLegacySrg, isResrgWorkplace, RESRG_NAME } from "../lib/projectIdentity";
 import { downloadSickLeavePng } from "../lib/sickLeavePng";
 import { scopeWorkspace } from "../lib/workspace";
 import { toUploadDate, zusFreshness } from "../lib/zusFreshness";
@@ -128,6 +128,8 @@ const projectDisplayName = (project) => {
   if (normalized.includes("cerland")) return "CERLAND";
   const hermes = getHermesProject(project);
   if (hermes) return hermes.label;
+  const saintGobain = getSaintGobainProject(project);
+  if (saintGobain) return saintGobain.label;
   if (normalized.includes("id logistics")) return "ID LOGISTICS";
   if (isResrgWorkplace(project)) return "RESRG";
   if (normalized.includes("toyota boshoku poland pt pl")) return "TOYOTA PL";

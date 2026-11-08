@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import * as XLSX from "xlsx";
 import { buildAbsenceReport } from "../src/lib/absenceReport.js";
-import { getHermesProject } from "../src/lib/projectIdentity.js";
+import { getHermesProject, getSaintGobainProject } from "../src/lib/projectIdentity.js";
 
 const template = await readFile(new URL("../src/assets/absence-template.xlsx", import.meta.url));
 const toyota = "Toyota Boshoku Poland PT (PSTZ)";
@@ -59,6 +59,26 @@ test("Hermes projects keep the same 11 columns and apply passport rules independ
     employee: { ...employee, project: name, projectId: id },
   }));
   const sheet = XLSX.read(buildAbsenceReport(template, rows, 8, "all", period)).Sheets.Absencja;
+  assert.equal(sheet["!ref"], "A1:K3");
+  assert.equal(sheet.C2.v, "00042");
+  assert.equal(sheet.C3, undefined);
+  assert.equal(sheet.D2.v, "01234567890");
+  assert.equal(sheet.D3.v, "01234567890");
+  assert.equal(sheet.G2.w, "10/1/26");
+  assert.equal(sheet.G3.w, "10/1/26");
+});
+
+test("Saint-Gobain PL keeps PESEL and a blank passport cell in the standard template", () => {
+  const normal = "Saint-Gobain Sekurit Polska Sp. z o.o. oddział Konin Żagański PT (HSZO)";
+  const polish = normal.replace("PT (HSZO)", "PT PL (HSZO)");
+  assert.equal(getSaintGobainProject(normal).label, "SAINT-GOBAIN");
+  assert.equal(getSaintGobainProject(polish).label, "SAINT-GOBAIN PL");
+  const rows = [normal, polish].map((project) => ({
+    start: "2026-09-29", end: "2026-10-05", employee: { ...employee, project },
+  }));
+  const book = XLSX.read(buildAbsenceReport(template, rows, 8, "all", period));
+  assert.deepEqual(book.SheetNames, ["Absencja", "Słownik"]);
+  const sheet = book.Sheets.Absencja;
   assert.equal(sheet["!ref"], "A1:K3");
   assert.equal(sheet.C2.v, "00042");
   assert.equal(sheet.C3, undefined);

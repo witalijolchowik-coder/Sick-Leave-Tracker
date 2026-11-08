@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { getHermesProject, RESRG_ID } from "./projectIdentity.js";
+import { getHermesProject, getSaintGobainProject, projectVariant, RESRG_ID } from "./projectIdentity.js";
 
 const HEADER_SCAN_LIMIT = 15;
 
@@ -30,7 +30,7 @@ export const normalizeProject = (value) => cleanText(value) || "Bez projektu";
 
 export const normalizeProjectName = (value) => {
   const source = normalizeProject(value);
-  return getHermesProject(source)?.name || source;
+  return getHermesProject(source)?.name || getSaintGobainProject(source)?.name || source;
 };
 
 export const normalizeCompanyCode = (value) =>
@@ -253,14 +253,14 @@ export const mergeEmployees = (records) => {
   return sorted.filter((employee) => {
     const keys = employee.aliases?.length ? employee.aliases : [employee.id];
     if (!employee.archived) {
-      const hermes = getHermesProject(employee.project)?.id;
+      const { family, pl } = projectVariant(employee.project);
       if (keys.some((key) => {
-        const projects = seenActive.get(key);
-        return projects && (!hermes || projects.has(undefined) || projects.has(hermes));
+        const previous = seenActive.get(key);
+        return previous && (previous.family !== family || previous.variants.has(pl));
       })) return false;
       keys.forEach((key) => {
-        if (!seenActive.has(key)) seenActive.set(key, new Set());
-        seenActive.get(key).add(hermes);
+        if (!seenActive.has(key)) seenActive.set(key, { family, variants: new Set() });
+        seenActive.get(key).variants.add(pl);
       });
       return true;
     }

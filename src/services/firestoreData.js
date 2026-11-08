@@ -19,9 +19,10 @@ import { db } from "../config/firebase";
 import {
   employeeArchiveKey,
   employeeMatchesLeaveCompany,
+  normalizeProjectName,
   projectCompanyCodes,
 } from "../lib/data";
-import { getHermesProject, isLegacySrg, isResrgWorkplace, LEGACY_SRG_ID, RESRG_ID, RESRG_NAME } from "../lib/projectIdentity.js";
+import { getHermesProject, isLegacySrg, isResrgWorkplace, projectVariant, LEGACY_SRG_ID, RESRG_ID, RESRG_NAME } from "../lib/projectIdentity.js";
 
 const WRITE_BATCH_SIZE = 400;
 const SICK_LEAVE_CHUNK_SIZE = 200;
@@ -50,6 +51,7 @@ const shortHash = (value) => {
 };
 
 export const createProjectId = (projectName) => {
+  projectName = normalizeProjectName(projectName);
   const hermes = getHermesProject(projectName);
   if (hermes) return hermes.id;
   const slug = String(projectName || "project")
@@ -230,8 +232,11 @@ const buildSickLeaveEvents = ({
     const candidates = matchingEmployees(employeesById, record);
     const first = candidates[0];
     if (!first) return;
-    const hermes = getHermesProject(first.project);
-    const matches = hermes ? candidates.filter((employee) => getHermesProject(employee.project)) : [first];
+    const firstVariant = projectVariant(first.project);
+    const matches = [first, ...candidates.slice(1).filter((employee) => {
+      const variant = projectVariant(employee.project);
+      return variant.family === firstVariant.family && variant.pl !== firstVariant.pl;
+    }).slice(0, 1)];
     const activeOnImport =
       record.start <= toLocalIsoDate(new Date()) &&
       record.end >= toLocalIsoDate(new Date());
@@ -312,7 +317,7 @@ export async function replaceProjectEmployees({
   user,
   sourceFileName,
 }) {
-  projectName = getHermesProject(projectName)?.name || projectName;
+  projectName = normalizeProjectName(projectName);
   const unifiedProject = isResrgWorkplace(projectName);
   const historicalOnly = isLegacySrg(projectName);
   const projectId = unifiedProject ? RESRG_ID : createProjectId(projectName);
