@@ -6,23 +6,75 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function projectPublish(previous, versionField, previousField, timeField, uidField) {
+      let next = request.resource.data;
+      return next.get(versionField, '') == previous.get(versionField, '') ||
+        (next.get(versionField, '') != '' &&
+         next.get(previousField, null) == previous.get(versionField, '') &&
+         next.get(timeField, null) == request.time &&
+         next.get(uidField, '') == request.auth.uid);
+    }
+
+    function validProject(previous) {
+      return projectPublish(previous, 'activeVersion', 'previousActiveVersion',
+                            'lastActiveImportAt', 'lastActiveImportByUid') &&
+             projectPublish(previous, 'archivedVersion', 'previousArchivedVersion',
+                            'lastArchivedImportAt', 'lastArchivedImportByUid');
+    }
+
+    function retiredRegister(previousField, currentField) {
+      let projectId = resource.data.projectId;
+      let project = get(/databases/$(database)/documents/projects/$(projectId)).data;
+      return resource.data.get('historicalOnly', false) == false &&
+        resource.data.version == project.get(previousField, '') &&
+        resource.data.version != project.get(currentField, '');
+    }
+
+    function statePath() {
+      return /databases/$(database)/documents/appState/current;
+    }
+
+    function validZusPublish(previous) {
+      let next = request.resource.data;
+      let version = next.sickLeavesVersion;
+      return version != previous.get('sickLeavesVersion', '') &&
+        next.previousSickLeavesVersion == previous.get('sickLeavesVersion', '') &&
+        next.lastSickLeavesImportByUid == request.auth.uid &&
+        next.lastSickLeavesImportAt == request.time &&
+        next.resrgHistoryInDataset == true &&
+        getAfter(/databases/$(database)/documents/sickLeaves/$(version)).data.importedAt == request.time;
+    }
+
+    function inactiveDataset(datasetId) {
+      return datasetId != 'resrg-history' &&
+        (!exists(statePath()) || get(statePath()).data.get('sickLeavesVersion', '') != datasetId);
+    }
+
     match /projects/{projectId} {
-      allow read, write: if signedIn();
+      allow read: if signedIn();
+      allow create: if signedIn() && validProject({});
+      allow update: if signedIn() && validProject(resource.data);
     }
 
     match /employees/{employeeId} {
-      allow read, write: if signedIn();
+      allow read, create: if signedIn();
+      allow delete: if signedIn() && retiredRegister('previousActiveVersion', 'activeVersion');
     }
 
     match /employeeArchives/{employeeId} {
-      allow read, write: if signedIn();
+      allow read, create: if signedIn();
+      allow delete: if signedIn() && retiredRegister('previousArchivedVersion', 'archivedVersion');
     }
 
     match /sickLeaves/{datasetId} {
-      allow read, write: if signedIn();
+      allow read: if signedIn();
+      allow create: if signedIn() && datasetId != 'resrg-history';
+      allow delete: if signedIn() && inactiveDataset(datasetId);
 
-      match /chunks/{chunkId} {
-        allow read, write: if signedIn();
+      match /{section}/{chunkId} {
+        allow read: if signedIn() && section in ['chunks', 'resrgHistory'];
+        allow create, delete: if signedIn() && section in ['chunks', 'resrgHistory'] &&
+          inactiveDataset(datasetId);
       }
     }
 
@@ -31,15 +83,33 @@ service cloud.firestore {
     }
 
     match /newsEvents/{eventId} {
-      allow read, write: if signedIn();
+      allow read, delete: if signedIn();
+      allow create: if signedIn() &&
+        request.resource.data.publishedByUid == request.auth.uid &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.version == getAfter(statePath()).data.sickLeavesVersion &&
+        getAfter(statePath()).data.lastSickLeavesImportAt == request.time;
     }
 
     match /hiddenArchiveSickLeaves/{hiddenId} {
       allow read, write: if signedIn();
     }
 
+    match /appState/current {
+      allow read: if signedIn();
+      allow create: if signedIn() && validZusPublish({});
+      allow update: if signedIn() && validZusPublish(resource.data);
+    }
+
     match /appState/{documentId} {
-      allow read, write: if signedIn();
+      allow get: if signedIn() && documentId == 'projectVisibility_' + request.auth.uid;
+    }
+
+    match /userSettings/{uid} {
+      allow get: if signedIn() && uid == request.auth.uid;
+      allow create, update: if signedIn() && uid == request.auth.uid &&
+        request.resource.data.keys().hasOnly(['workspaceProjects', 'hiddenProjects']) &&
+        request.resource.data.workspaceProjects is map && request.resource.data.hiddenProjects is map;
     }
   }
 }

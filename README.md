@@ -22,7 +22,7 @@ npm run dev
 ## Firebase setup
 
 1. Open Firebase Console → **Authentication** → **Sign-in method**.
-2. Enable **Email/Password**.
+2. Enable **Email/Password** and disable client-side account creation.
 3. Create at least one user in **Authentication → Users**.
 4. Create a Firestore database.
 5. Deploy the included `firestore.rules` file in Firebase Console or with
@@ -43,12 +43,24 @@ Firestore Security Rules.
 - `newsEvents` — derived sick-leave changes shown in the Aktualności feed
 - `appState/current` — pointer to the active sick-leave dataset
 - `imports` — import history, timestamps, user and record counts
+- `userSettings/{uid}` — private project membership and dashboard card preferences
 
 Only parsed data is stored. Original XLS/XLSX files are never uploaded.
 
 Project imports are versioned: replacing one project's active list or archive
 does not touch any other project. Sick-leave imports switch to the new dataset
 only after every chunk has been written successfully.
+
+Each coordinator can add shared projects from **Dostępne projekty** in Settings.
+Employee imports also add the imported project to the uploader's workspace.
+Hiding a card affects only the dashboard. Search, news, and reports use all
+projects in the workspace, including projects with hidden cards.
+
+The ZUS indicator uses the server timestamp of the last successful publication
+and the Warsaw calendar. New users start with an empty workspace. When upgrading
+an existing installation, back up the old preferences and seed the primary
+coordinator's `userSettings/{uid}` with the current project IDs and their
+previous `hiddenProjects` map before deploying.
 
 ## GitHub Pages
 

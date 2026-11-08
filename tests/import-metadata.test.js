@@ -5,6 +5,7 @@ import vm from "node:vm";
 import * as XLSX from "xlsx";
 import * as data from "../src/lib/data.js";
 import * as projectIdentity from "../src/lib/projectIdentity.js";
+import { scopeWorkspace } from "../src/lib/workspace.js";
 
 const workbookFile = (name, sheets) => {
   const workbook = XLSX.utils.book_new();
@@ -70,9 +71,10 @@ test("ZUS imports preserve original numbers and issue dates without altering fal
 
 // Exercise the real Firestore service with an isolated, in-memory transport.
 // No Firebase app, credentials, or remote database is used by these tests.
-const firestoreHarness = async () => {
+const firestoreHarness = async ({ beforeBatch = async () => {}, beforeTransaction = async () => {} } = {}) => {
   const documents = new Map();
   let nextId = 0;
+  let transactions = Promise.resolve();
   const reference = (parent, ...parts) => ({ path: [parent.path, ...parts].filter(Boolean).join("/") });
   const snapshot = (path, value) => ({
     id: path.split("/").at(-1),
@@ -88,6 +90,7 @@ const firestoreHarness = async () => {
     collection: reference,
     doc: (parent, ...parts) => reference(parent, ...(parts.length ? parts : [`test-${++nextId}`])),
     getDoc: async (ref) => snapshot(ref.path, documents.get(ref.path)),
+    getDocFromServer: async (ref) => snapshot(ref.path, documents.get(ref.path)),
     getDocs: async (target) => {
       const ref = target.reference || target;
       let entries = [...documents].filter(([path]) =>
@@ -102,6 +105,7 @@ const firestoreHarness = async () => {
       }
       return { docs: entries.map(([path, value]) => snapshot(path, value)) };
     },
+    getDocsFromServer: (target) => firestore.getDocs(target),
     limit: (count) => ({ type: "limit", count }),
     onSnapshot: () => () => {},
     orderBy: (field, direction) => ({ type: "orderBy", field, direction }),
@@ -111,17 +115,32 @@ const firestoreHarness = async () => {
     where: (field, operator, value) => ({ type: "where", field, operator, value }),
     writeBatch: () => {
       const mutations = [];
+      const paths = [];
       return {
-        set: (ref, value, options) => mutations.push(() => setDocument(ref, value, options)),
-        delete: (ref) => mutations.push(() => documents.delete(ref.path)),
-        commit: async () => mutations.forEach((mutation) => mutation()),
+        set: (ref, value, options) => {
+          paths.push(ref.path);
+          mutations.push(() => setDocument(ref, value, options));
+        },
+        delete: (ref) => {
+          paths.push(ref.path);
+          mutations.push(() => documents.delete(ref.path));
+        },
+        commit: async () => {
+          await beforeBatch(paths);
+          mutations.forEach((mutation) => mutation());
+        },
       };
     },
     runTransaction: async (_db, update) => {
-      const batch = firestore.writeBatch();
-      const value = await update({ ...batch, get: firestore.getDoc });
-      await batch.commit();
-      return value;
+      await beforeTransaction();
+      const transaction = transactions.then(async () => {
+        const batch = firestore.writeBatch();
+        const value = await update({ ...batch, get: firestore.getDoc });
+        await batch.commit();
+        return value;
+      });
+      transactions = transaction.catch(() => {});
+      return transaction;
     },
   };
   const context = vm.createContext({ console });
@@ -294,12 +313,107 @@ test("RESRG keeps its current register, projects legacy history once and honors 
   assert.equal(documents.has("employees/legacy-only"), true);
 });
 
-test("visibility writes use separate user documents and leave the shared dataset pointer intact", async () => {
+test("users add, hide and remove projects independently from the shared registers", async () => {
   const { service, documents } = await firestoreHarness();
   documents.set("appState/current", { sickLeavesVersion: "shared" });
-  await service.saveProjectVisibility("fixture-a", "cerland", true);
-  await service.saveProjectVisibility("fixture-b", "cerland", false);
-  assert.deepEqual(documents.get("appState/projectVisibility_fixture-a"), { hiddenProjects: { cerland: true } });
-  assert.deepEqual(documents.get("appState/projectVisibility_fixture-b"), { hiddenProjects: { cerland: false } });
+  const record = { id: "123", firstName: "Test", lastName: "Employee", project: "Cerland", aliases: ["123"] };
+  const { projectId } = await service.replaceProjectEmployees({
+    projectName: record.project, records: [record], archived: false, user: { uid: "fixture-a" },
+  });
+  const scope = (cloud, uid) => scopeWorkspace(cloud.projects, cloud.activeEmployees, [],
+    documents.get("userSettings/" + uid)?.workspaceProjects);
+  const original = await service.loadCloudData();
+  assert.equal(scope(original, "fixture-a").employees.length, 1);
+  assert.equal(scope(original, "fixture-b").employees.length, 0);
+  await service.setWorkspaceProject("fixture-b", projectId, true);
+  await service.saveProjectVisibility("fixture-a", projectId, true);
+  assert.equal(documents.get("userSettings/fixture-a").hiddenProjects[projectId], true);
+  assert.equal(documents.get("userSettings/fixture-b").hiddenProjects[projectId], undefined);
+  assert.equal(scope(original, "fixture-a").employees.length, 1);
+  assert.equal(scope(original, "fixture-b").employees.length, 1);
+  await service.setWorkspaceProject("fixture-a", projectId, false);
+  const reloaded = await service.loadCloudData();
+  assert.equal(scope(reloaded, "fixture-a").employees.length, 0);
+  assert.equal(scope(reloaded, "fixture-b").employees.length, 1);
+  assert.equal(reloaded.activeEmployees.length, 1);
   assert.deepEqual(documents.get("appState/current"), { sickLeavesVersion: "shared" });
+});
+
+test("concurrent ZUS publishers compare news against the actual predecessor and retain the latest complete upload", async () => {
+  const { service, documents } = await firestoreHarness();
+  const employee = { id: "1", project: "Cerland", fullName: "Test Employee", aliases: ["1"] };
+  const original = { id: "1", certificate: "FIXTURE", start: "2026-10-01", end: "2026-10-02" };
+  await service.replaceSickLeaves({ records: [original], employees: [employee], user: { uid: "a" } });
+  const changed = { ...original, end: "2026-10-03" };
+  const uploads = await Promise.all(["a", "b"].map((uid) =>
+    service.replaceSickLeaves({ records: [changed], employees: [employee], user: { uid } })));
+  const cloud = await service.loadCloudData();
+  assert.equal(cloud.sickLeaves.length, 1);
+  assert.equal(cloud.sickLeaves[0].end, changed.end);
+  assert.equal(cloud.newsEvents.length, 1);
+  assert.equal(cloud.newsEvents[0].type, "changed");
+  assert.ok(uploads.some(({ version }) => cloud.state.sickLeavesVersion === version));
+  assert.equal(cloud.state.lastSickLeavesImportAt.seconds, 1);
+  const dataset = documents.get("sickLeaves/" + cloud.state.sickLeavesVersion);
+  assert.equal(cloud.state.lastSickLeavesImportByUid, dataset.importedByUid);
+});
+
+test("failed staging keeps the shared ZUS and employee versions readable", async () => {
+  let failurePrefix;
+  const { service } = await firestoreHarness({
+    beforeBatch: async (paths) => {
+      if (failurePrefix && paths.some((path) => path.startsWith(failurePrefix))) {
+        throw new Error("Fixture interruption");
+      }
+    },
+  });
+  const employee = { id: "1", project: "Cerland", aliases: ["1"] };
+  const leave = { id: "1", certificate: "FIXTURE", start: "2026-10-01", end: "2026-10-02" };
+  await service.replaceProjectEmployees({ projectName: "Cerland", archived: false, records: [employee] });
+  const { version } = await service.replaceSickLeaves({ records: [leave] });
+  failurePrefix = "sickLeaves/";
+  await assert.rejects(service.replaceSickLeaves({ records: [{ ...leave, end: "2026-10-05" }] }), /Fixture interruption/);
+  failurePrefix = "employees/";
+  await assert.rejects(service.replaceProjectEmployees({
+    projectName: "Cerland", archived: false, records: [{ ...employee, id: "2" }],
+  }), /Fixture interruption/);
+  const reloaded = await service.loadCloudData();
+  assert.equal(reloaded.state.sickLeavesVersion, version);
+  assert.equal(reloaded.sickLeaves[0].end, leave.end);
+  assert.equal(reloaded.activeEmployees[0].id, "1");
+});
+
+test("retiring one project register never deletes another coordinator's staged version", async () => {
+  let pauseNextPublish = false;
+  let staged;
+  let resume;
+  const ready = new Promise((resolve) => { staged = resolve; });
+  const gate = new Promise((resolve) => { resume = resolve; });
+  const { service } = await firestoreHarness({
+    beforeTransaction: async () => {
+      if (!pauseNextPublish) return;
+      pauseNextPublish = false;
+      staged();
+      await gate;
+    },
+  });
+  const upload = (projectName, id, uid, archived = false) =>
+    service.replaceProjectEmployees({ projectName, archived, records: [{ id, aliases: [id] }], user: { uid } });
+  await upload("Cerland", "old", "a");
+  await upload("Cerland", "archive", "a", true);
+  await upload("Hermes Fulfilment", "hermes", "a");
+  pauseNextPublish = true;
+  const pending = upload("Cerland", "second", "b");
+  await ready;
+  try {
+    await upload("Cerland", "first", "a");
+    const first = await service.loadCloudData();
+    assert.deepEqual(Array.from(first.activeEmployees, (employee) => employee.id).sort(), ["first", "hermes"]);
+  } finally {
+    resume();
+  }
+  await pending;
+  const second = await service.loadCloudData();
+  assert.deepEqual(Array.from(second.activeEmployees, (employee) => employee.id).sort(), ["hermes", "second"]);
+  assert.deepEqual(Array.from(second.archivedEmployees, (employee) => employee.id), ["archive"]);
 });

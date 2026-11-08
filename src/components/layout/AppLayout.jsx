@@ -1,5 +1,6 @@
 import CloudDoneRoundedIcon from "@mui/icons-material/CloudDoneRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
+import RemoveCircleOutlineRoundedIcon from "@mui/icons-material/RemoveCircleOutlineRounded";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import {
   Alert,
@@ -24,50 +25,46 @@ import {
 import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
-import { saveProjectVisibility, subscribeToProjectVisibility } from "../../services/firestoreData";
+import { saveProjectVisibility, setWorkspaceProject, subscribeToUserSettings } from "../../services/firestoreData";
 
 export function AppLayout() {
   const { user, signOut } = useAuth();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [visibilityProjects, setVisibilityProjects] = useState([]);
-  const [hiddenProjects, setHiddenProjects] = useState({});
-  const [pendingVisibility, setPendingVisibility] = useState({});
-  const [visibilityReady, setVisibilityReady] = useState(false);
-  const [visibilityError, setVisibilityError] = useState("");
+  const [globalProjects, setGlobalProjects] = useState([]);
+  const [settings, setSettings] = useState(null);
+  const [pendingProjects, setPendingProjects] = useState({});
+  const [settingsError, setSettingsError] = useState("");
 
   useEffect(() => {
-    setHiddenProjects({});
-    setPendingVisibility({});
-    setVisibilityReady(false);
-    setVisibilityError("");
+    setSettings(null);
+    setPendingProjects({});
+    setSettingsError("");
     if (!user?.uid) return;
-    return subscribeToProjectVisibility(user.uid, (preferences) => {
-      setHiddenProjects(preferences);
-      setVisibilityReady(true);
-    }, () => setVisibilityError("Nie udało się odczytać ustawień projektów."));
+    return subscribeToUserSettings(user.uid, setSettings,
+      () => setSettingsError("Nie udało się odczytać ustawień projektów."));
   }, [user?.uid]);
 
-  const toggleProject = async (projectId, visible) => {
-    const change = { hidden: !visible };
-    setVisibilityError("");
-    setPendingVisibility((current) => ({ ...current, [projectId]: change }));
+  const changeProject = async (projectId, save) => {
+    setSettingsError("");
+    setPendingProjects((current) => ({ ...current, [projectId]: true }));
     try {
-      await saveProjectVisibility(user.uid, projectId, change.hidden);
+      await save();
     } catch {
-      setVisibilityError("Nie udało się zapisać widoczności projektu.");
+      setSettingsError("Nie udało się zapisać ustawień projektu.");
     } finally {
-      setPendingVisibility((current) => {
-        if (current[projectId] !== change) return current;
+      setPendingProjects((current) => {
         const next = { ...current };
         delete next[projectId];
         return next;
       });
     }
   };
-  const displayedVisibility = { ...hiddenProjects };
-  Object.entries(pendingVisibility).forEach(([id, change]) => {
-    displayedVisibility[id] = change.hidden;
-  });
+  const workspaceProjects = settings?.workspaceProjects;
+  const hiddenProjects = settings?.hiddenProjects;
+  const myProjects = globalProjects.filter(({ id }) => workspaceProjects?.[id]);
+  const availableProjects = globalProjects.filter(({ id }) => !workspaceProjects?.[id]);
+  const changeMembership = (id, member) =>
+    changeProject(id, () => setWorkspaceProject(user.uid, id, member));
 
   return (
     <Box sx={{ minHeight: "100vh" }}>
@@ -139,21 +136,47 @@ export function AppLayout() {
         </Toolbar>
       </AppBar>
       <Container maxWidth="xl" sx={{ py: { xs: 2, md: 2.25 } }}>
-        <Outlet context={{ hiddenProjects: displayedVisibility, setVisibilityProjects }} />
+        <Outlet context={{ hiddenProjects, workspaceProjects, setGlobalProjects }} />
       </Container>
       <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="xs" fullWidth aria-labelledby="settings-title">
         <DialogTitle id="settings-title">Ustawienia</DialogTitle>
         <DialogContent>
-          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Widoczność projektów</Typography>
-          {visibilityError && <Alert severity="error">{visibilityError}</Alert>}
-          <FormGroup>
-            {visibilityProjects.map(({ id, name }) => (
-              <FormControlLabel key={id} label={name} control={
-                <Switch size="small" checked={!displayedVisibility[id]} disabled={!visibilityReady}
-                  onChange={(_event, checked) => toggleProject(id, checked)} />
-              } />
-            ))}
-          </FormGroup>
+          {settingsError && <Alert severity="error">{settingsError}</Alert>}
+          {settings && (
+            <>
+              <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Moje projekty</Typography>
+              <FormGroup>
+                {myProjects.map(({ id, name }) => (
+                  <Box key={id} sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <FormControlLabel label={name} control={
+                      <Switch size="small" checked={!hiddenProjects[id]} disabled={pendingProjects[id]}
+                        onChange={(_event, checked) => changeProject(id,
+                          () => saveProjectVisibility(user.uid, id, !checked))} />
+                    } />
+                    <Tooltip title="Usuń z moich projektów">
+                      <span>
+                        <IconButton size="small" aria-label={`Usuń ${name} z moich projektów`}
+                          disabled={pendingProjects[id]} onClick={() => changeMembership(id, false)}>
+                          <RemoveCircleOutlineRoundedIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Box>
+                ))}
+                {!myProjects.length && <Typography variant="caption" color="text.secondary">Brak projektów</Typography>}
+              </FormGroup>
+              <Typography variant="subtitle2" sx={{ mt: 2, mb: 0.5 }}>Dostępne projekty</Typography>
+              {availableProjects.map(({ id, name }) => (
+                <Box key={id} sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Typography variant="body2">{name}</Typography>
+                  <Button size="small" disabled={pendingProjects[id]} onClick={() => changeMembership(id, true)}>
+                    Dodaj do moich projektów
+                  </Button>
+                </Box>
+              ))}
+              {!availableProjects.length && <Typography variant="caption" color="text.secondary">Brak dostępnych projektów</Typography>}
+            </>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSettingsOpen(false)}>Zamknij</Button>

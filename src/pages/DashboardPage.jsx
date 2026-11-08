@@ -44,6 +44,8 @@ import { useAuth } from "../contexts/AuthContext";
 import { exportAbsenceReport } from "../lib/absenceReport";
 import { isLegacySrg, isResrgWorkplace, RESRG_NAME } from "../lib/projectIdentity";
 import { downloadSickLeavePng } from "../lib/sickLeavePng";
+import { scopeWorkspace } from "../lib/workspace";
+import { toUploadDate, zusFreshness } from "../lib/zusFreshness";
 import {
   exportHermesReport,
   exportToyotaReport,
@@ -193,7 +195,7 @@ function TrendIndicator({ value, previousRange }) {
   );
 }
 
-function SourceCard({ title, description, meta, busy, onFiles }) {
+function SourceCard({ title, description, meta, busy, onFiles, freshness }) {
   const inputRef = useRef(null);
 
   return (
@@ -228,6 +230,17 @@ function SourceCard({ title, description, meta, busy, onFiles }) {
         <Box sx={{ minWidth: 0, flexGrow: 1 }}>
           <Typography variant="body2" fontWeight={800}>
             {title}
+            {freshness && (
+              <Tooltip title={freshness.tooltip || freshness.label}>
+                <Box component="span" role="img" aria-label={freshness.label} tabIndex={0}
+                  sx={{
+                    display: "inline-block", ml: 1, width: 7, height: 7, borderRadius: "50%",
+                    verticalAlign: "middle", bgcolor: freshness.color,
+                    boxShadow: `0 0 7px ${alpha(freshness.color, 0.6)}`,
+                  }}
+                />
+              </Tooltip>
+            )}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {description}
@@ -582,9 +595,9 @@ function NewsFeed({ events, projectStats }) {
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const { hiddenProjects, setVisibilityProjects } = useOutletContext();
+  const { hiddenProjects, workspaceProjects, setGlobalProjects } = useOutletContext();
   const defaults = useMemo(monthRange, []);
-  const [employees, setEmployees] = useState([]);
+  const [globalEmployees, setGlobalEmployees] = useState([]);
   const [sickLeaves, setSickLeaves] = useState([]);
   const [historicalSickLeaves, setHistoricalSickLeaves] = useState([]);
   const [newsEvents, setNewsEvents] = useState([]);
@@ -592,21 +605,23 @@ export function DashboardPage() {
   const [cloudProjects, setCloudProjects] = useState([]);
   const [cloudState, setCloudState] = useState({});
   const [cloudLoading, setCloudLoading] = useState(true);
-  const [selectedProject, setSelectedProject] = useState("all");
+  const [projectFilter, setSelectedProject] = useState("all");
   const [dateRange, setDateRange] = useState(defaults);
-  const [results, setResults] = useState([]);
+  const [search, setSearch] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [hours, setHours] = useState(8);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState(null);
+  const [clock, setClock] = useState(() => new Date());
+  const refreshRequest = useRef(0);
 
   const refreshCloudData = useCallback(async (silent = false) => {
+    const request = ++refreshRequest.current;
     if (!silent) setCloudLoading(true);
     try {
       const cloud = await loadCloudData();
-      setEmployees(
-        mergeEmployees([...cloud.activeEmployees, ...cloud.archivedEmployees]),
-      );
+      if (request !== refreshRequest.current) return;
+      setGlobalEmployees([...cloud.activeEmployees, ...cloud.archivedEmployees]);
       setSickLeaves(cloud.sickLeaves);
       setHistoricalSickLeaves(cloud.historicalSickLeaves || []);
       setNewsEvents(cloud.newsEvents || []);
@@ -614,6 +629,7 @@ export function DashboardPage() {
       setCloudProjects(cloud.projects);
       setCloudState(cloud.state);
     } catch (error) {
+      if (request !== refreshRequest.current) return;
       setMessage({
         severity: "error",
         text:
@@ -622,7 +638,7 @@ export function DashboardPage() {
             : `Nie udało się pobrać danych z Firestore: ${error.message}`,
       });
     } finally {
-      if (!silent) setCloudLoading(false);
+      if (request === refreshRequest.current) setCloudLoading(false);
     }
   }, []);
 
@@ -641,25 +657,47 @@ export function DashboardPage() {
         }),
     );
     return () => {
+      refreshRequest.current += 1;
       window.clearTimeout(timer);
       unsubscribe();
     };
   }, [refreshCloudData]);
 
-  const projects = useMemo(
-    () =>
-      [
-        ...new Set([
-          ...cloudProjects.map((project) => project.projectName),
-          ...employees.map((employee) => employee.project),
-        ]),
-      ].sort((a, b) => a.localeCompare(b, "pl")),
-    [cloudProjects, employees],
+  useEffect(() => {
+    const updateClock = () => setClock(new Date());
+    const timer = window.setInterval(updateClock, 30_000);
+    window.addEventListener("focus", updateClock);
+    document.addEventListener("visibilitychange", updateClock);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", updateClock);
+      document.removeEventListener("visibilitychange", updateClock);
+    };
+  }, []);
+
+  const workspace = useMemo(
+    () => scopeWorkspace(cloudProjects, globalEmployees, newsEvents, workspaceProjects),
+    [cloudProjects, globalEmployees, newsEvents, workspaceProjects],
   );
+  const employees = useMemo(() => mergeEmployees(workspace.employees), [workspace.employees]);
+  const projects = useMemo(
+    () => workspace.projects.map((project) => project.projectName).sort((a, b) => a.localeCompare(b, "pl")),
+    [workspace.projects],
+  );
+  const selectedProject = projects.includes(projectFilter) ? projectFilter : "all";
+  useEffect(() => {
+    if (workspaceProjects && !cloudLoading && projectFilter !== selectedProject) {
+      setSelectedProject(selectedProject);
+    }
+  }, [workspaceProjects, cloudLoading, projectFilter, selectedProject]);
 
   const previousRange = useMemo(() => previousPeriod(dateRange), [dateRange]);
   const searchableSickLeaves = useMemo(
     () => [...sickLeaves, ...historicalSickLeaves], [sickLeaves, historicalSickLeaves],
+  );
+  const results = useMemo(
+    () => search ? searchSickLeaves({ ...search, employees, sickLeaves: searchableSickLeaves, hiddenArchiveKeys }) : [],
+    [search, employees, searchableSickLeaves, hiddenArchiveKeys],
   );
 
   const currentPeriodRows = useMemo(
@@ -715,19 +753,17 @@ export function DashboardPage() {
   );
 
   useEffect(() => {
-    setVisibilityProjects(projects.map((project) => {
-      const stored = cloudProjects.find((item) => item.projectName === project);
-      return { id: stored?.projectId || stored?.id || createProjectId(project), name: projectDisplayName(project) };
-    }));
-  }, [cloudProjects, projects, setVisibilityProjects]);
+    setGlobalProjects(cloudProjects.map((project) => ({
+      id: project.projectId || project.id,
+      name: projectDisplayName(project.projectName),
+    })).sort((left, right) => left.name.localeCompare(right.name, "pl")));
+  }, [cloudProjects, setGlobalProjects]);
 
   const visibleProjectStats = projectStats.filter((stats) =>
-    !hiddenProjects[stats.id] && (selectedProject === "all" || stats.project === selectedProject));
-  const visibleNewsEvents =
-    (selectedProject === "all"
-      ? [...newsEvents]
-      : newsEvents.filter((event) => event.projectName === selectedProject)
-    ).sort(sortNewsEvents);
+    !hiddenProjects?.[stats.id] && (selectedProject === "all" || stats.project === selectedProject));
+  const visibleNewsEvents = workspace.newsEvents
+    .filter((event) => selectedProject === "all" || event.projectName === selectedProject)
+    .sort(sortNewsEvents);
 
   const currentScopeRows =
     selectedProject === "all"
@@ -752,6 +788,21 @@ export function DashboardPage() {
   });
   const hermesRows = selectedRows.filter((row) => isHermesProject(row.employee.project));
   const resultPeopleCount = uniquePeople(results);
+  const lastUpload = toUploadDate(cloudState.lastSickLeavesImportAt);
+  const freshness = zusFreshness(lastUpload, clock);
+  const uploadTime = lastUpload && new Intl.DateTimeFormat("pl-PL", {
+    timeZone: "Europe/Warsaw", dateStyle: "short", timeStyle: "medium",
+  }).format(lastUpload);
+  const freshnessTooltip = lastUpload ? (
+    <>
+      {freshness.label}<br />
+      Import: {uploadTime} (Europe/Warsaw)<br />
+      Wersja: {cloudState.sickLeavesVersion}<br />
+      Rekordy: {cloudState.sickLeavesCount ?? sickLeaves.length}
+      {cloudState.lastSickLeavesImportByEmail && <><br />{cloudState.lastSickLeavesImportByEmail}</>}
+      {cloudState.lastSickLeavesImportByUid && <><br />UID: {cloudState.lastSickLeavesImportByUid}</>}
+    </>
+  ) : freshness.label;
 
   const uploadEmployees = async (files) => {
     setBusy("employees");
@@ -798,7 +849,7 @@ export function DashboardPage() {
         importedCount += imported.recordCount;
       }
 
-      setResults([]);
+      setSearch(null);
       await refreshCloudData();
       setMessage({
         severity: "success",
@@ -824,10 +875,10 @@ export function DashboardPage() {
       await replaceSickLeaves({
         records: merged,
         user,
-        employees,
+        employees: mergeEmployees(globalEmployees),
         sourceFileNames: files.map((file) => file.name),
       });
-      setResults([]);
+      setSearch(null);
       await refreshCloudData();
       setMessage({
         severity: "success",
@@ -854,15 +905,14 @@ export function DashboardPage() {
     }
     setBusy("search");
     window.setTimeout(() => {
+      const filters = { project: selectedProject, dateStart: dateRange.start, dateEnd: dateRange.end };
       const found = searchSickLeaves({
+        ...filters,
         employees,
         sickLeaves: searchableSickLeaves,
-        project: selectedProject,
-        dateStart: dateRange.start,
-        dateEnd: dateRange.end,
         hiddenArchiveKeys,
       });
-      setResults(found);
+      setSearch(filters);
       setSelectedIds(new Set(found.map((row) => row.resultId)));
       setMessage({
         severity: found.length ? "success" : "info",
@@ -896,9 +946,6 @@ export function DashboardPage() {
         user,
       });
       setHiddenArchiveKeys((current) => new Set([...current, archiveKey]));
-      setResults((current) =>
-        current.filter((candidate) => candidate.archiveKey !== archiveKey),
-      );
       setSelectedIds((current) => {
         const next = new Set(current);
         results
@@ -980,13 +1027,12 @@ export function DashboardPage() {
         <SourceCard
           title="Zaświadczenia ZUS"
           description="Najnowsza wersja w chmurze"
+          freshness={cloudLoading ? null : { ...freshness, tooltip: freshnessTooltip }}
           meta={
             cloudLoading
               ? "Pobieranie z Firestore…"
-              : sickLeaves.length
-                ? `${sickLeaves.length} zwolnień • ${formatImportTime(
-                    cloudState.lastSickLeavesImportAt,
-                  )}`
+              : cloudState.sickLeavesVersion
+                ? `${cloudState.sickLeavesCount ?? sickLeaves.length} zwolnień • ${uploadTime || "brak importu"}`
                 : "Brak danych w Firestore"
           }
           busy={busy === "leaves"}
