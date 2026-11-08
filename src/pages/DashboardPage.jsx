@@ -42,7 +42,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { exportAbsenceReport } from "../lib/absenceReport";
-import { isLegacySrg, isResrgWorkplace, RESRG_NAME } from "../lib/projectIdentity";
+import { getHermesProject, isLegacySrg, isResrgWorkplace, RESRG_NAME } from "../lib/projectIdentity";
 import { downloadSickLeavePng } from "../lib/sickLeavePng";
 import { scopeWorkspace } from "../lib/workspace";
 import { toUploadDate, zusFreshness } from "../lib/zusFreshness";
@@ -119,14 +119,15 @@ const projectAccent = (project, fallbackIndex) => {
   if (isResrgWorkplace(project)) return "#FF6B86";
   if (normalized.includes("toyota boshoku poland pt pl")) return "#F6C85F";
   if (normalized.includes("toyota boshoku poland pt")) return "#38BDF8";
-  if (normalized.includes("hermes fulfilment")) return "#A78BFA";
+  if (getHermesProject(project)) return "#A78BFA";
   return PROJECT_ACCENTS[fallbackIndex % PROJECT_ACCENTS.length];
 };
 
 const projectDisplayName = (project) => {
   const normalized = project.toLowerCase();
   if (normalized.includes("cerland")) return "CERLAND";
-  if (normalized.includes("hermes fulfilment")) return "HERMES";
+  const hermes = getHermesProject(project);
+  if (hermes) return hermes.label;
   if (normalized.includes("id logistics")) return "ID LOGISTICS";
   if (isResrgWorkplace(project)) return "RESRG";
   if (normalized.includes("toyota boshoku poland pt pl")) return "TOYOTA PL";
@@ -134,7 +135,6 @@ const projectDisplayName = (project) => {
   return project;
 };
 
-const isHermesProject = (project) => project.toLowerCase().includes("hermes fulfilment");
 
 const eventLabels = {
   started: "Rozpoczęcie zwolnienia",
@@ -786,7 +786,7 @@ export function DashboardPage() {
     const project = row.employee.project.toUpperCase();
     return project.includes("TOYOTA") || project.includes("TBPL");
   });
-  const hermesRows = selectedRows.filter((row) => isHermesProject(row.employee.project));
+  const hermesRows = selectedRows.filter((row) => getHermesProject(row.employee.project));
   const resultPeopleCount = uniquePeople(results);
   const lastUpload = toUploadDate(cloudState.lastSickLeavesImportAt);
   const freshness = zusFreshness(lastUpload, clock);

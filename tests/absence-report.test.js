@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import * as XLSX from "xlsx";
 import { buildAbsenceReport } from "../src/lib/absenceReport.js";
+import { getHermesProject } from "../src/lib/projectIdentity.js";
 
 const template = await readFile(new URL("../src/assets/absence-template.xlsx", import.meta.url));
 const toyota = "Toyota Boshoku Poland PT (PSTZ)";
@@ -48,4 +49,21 @@ test("PL passports stay blank and missing PESEL is never replaced by the leave i
   assert.equal(report.Sheets.Absencja.D2, undefined);
   assert.equal(report.Sheets.Absencja.J2.v, 8);
   assert.equal(buildAbsenceReport(template, [row], 8, toyota, range), null);
+});
+
+test("Hermes projects keep the same 11 columns and apply passport rules independently", () => {
+  const hermes = getHermesProject("Hermes Fulfilment Sp. z o.o. UZwPT (USZO)");
+  const pl = getHermesProject("Hermes Fulfilment Sp. z o.o. PL UZwPT (USZO)");
+  const rows = [hermes, pl].map(({ id, name }) => ({
+    start: "2026-09-29", end: "2026-10-05",
+    employee: { ...employee, project: name, projectId: id },
+  }));
+  const sheet = XLSX.read(buildAbsenceReport(template, rows, 8, "all", period)).Sheets.Absencja;
+  assert.equal(sheet["!ref"], "A1:K3");
+  assert.equal(sheet.C2.v, "00042");
+  assert.equal(sheet.C3, undefined);
+  assert.equal(sheet.D2.v, "01234567890");
+  assert.equal(sheet.D3.v, "01234567890");
+  assert.equal(sheet.G2.w, "10/1/26");
+  assert.equal(sheet.G3.w, "10/1/26");
 });

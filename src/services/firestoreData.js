@@ -21,7 +21,7 @@ import {
   employeeMatchesLeaveCompany,
   projectCompanyCodes,
 } from "../lib/data";
-import { isLegacySrg, isResrgWorkplace, LEGACY_SRG_ID, RESRG_ID, RESRG_NAME } from "../lib/projectIdentity.js";
+import { getHermesProject, isLegacySrg, isResrgWorkplace, LEGACY_SRG_ID, RESRG_ID, RESRG_NAME } from "../lib/projectIdentity.js";
 
 const WRITE_BATCH_SIZE = 400;
 const SICK_LEAVE_CHUNK_SIZE = 200;
@@ -50,6 +50,8 @@ const shortHash = (value) => {
 };
 
 export const createProjectId = (projectName) => {
+  const hermes = getHermesProject(projectName);
+  if (hermes) return hermes.id;
   const slug = String(projectName || "project")
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
@@ -204,13 +206,11 @@ const employeeLookup = (employees) => {
   return lookup;
 };
 
-const selectEmployeeForLeaveEvent = (employeesById, record) => {
-  const candidates = [
+const matchingEmployees = (employeesById, record) =>
+  [
     ...(employeesById.active.get(record.id) || []),
     ...(employeesById.archive.get(record.id) || []),
   ].filter((employee) => employeeMatchesLeaveCompany(employee, record));
-  return candidates[0] || null;
-};
 
 const buildSickLeaveEvents = ({
   previousRecords,
@@ -227,24 +227,33 @@ const buildSickLeaveEvents = ({
   const events = [];
 
   const createEvent = (type, record, previousRecord = null) => {
-    const employee = selectEmployeeForLeaveEvent(employeesById, record);
-    if (!employee) return;
+    const candidates = matchingEmployees(employeesById, record);
+    const first = candidates[0];
+    if (!first) return;
+    const hermes = getHermesProject(first.project);
+    const matches = hermes ? candidates.filter((employee) => getHermesProject(employee.project)) : [first];
     const activeOnImport =
       record.start <= toLocalIsoDate(new Date()) &&
       record.end >= toLocalIsoDate(new Date());
-    events.push({
-      type: type === "new" && activeOnImport ? "started" : type,
-      employeeId: record.id,
-      employeeName: employee.fullName || record.sourceName || record.id,
-      projectId: employee.projectId || createProjectId(employee.project),
-      projectName: employee.project,
-      start: record.start,
-      end: record.end,
-      previousStart: previousRecord?.start || "",
-      previousEnd: previousRecord?.end || "",
-      certificate: record.certificate || "",
-      version,
-    });
+    const seen = new Set();
+    for (const employee of matches) {
+      const projectId = employee.projectId || createProjectId(employee.project);
+      if (seen.has(projectId)) continue;
+      seen.add(projectId);
+      events.push({
+        type: type === "new" && activeOnImport ? "started" : type,
+        employeeId: record.id,
+        employeeName: employee.fullName || record.sourceName || record.id,
+        projectId,
+        projectName: employee.project,
+        start: record.start,
+        end: record.end,
+        previousStart: previousRecord?.start || "",
+        previousEnd: previousRecord?.end || "",
+        certificate: record.certificate || "",
+        version,
+      });
+    }
   };
 
   nextByKey.forEach((record, key) => {
@@ -303,6 +312,7 @@ export async function replaceProjectEmployees({
   user,
   sourceFileName,
 }) {
+  projectName = getHermesProject(projectName)?.name || projectName;
   const unifiedProject = isResrgWorkplace(projectName);
   const historicalOnly = isLegacySrg(projectName);
   const projectId = unifiedProject ? RESRG_ID : createProjectId(projectName);
@@ -451,7 +461,7 @@ export async function replaceSickLeaves({
     const history = new Map(retainedRecords.map((record) => [leaveKey(record), record]));
     const resrg = employeeLookup(employees.filter((employee) => employee.projectId === RESRG_ID));
     for (const record of previousRecords) {
-      if (selectEmployeeForLeaveEvent(resrg, record)) history.set(leaveKey(record), record);
+      if (matchingEmployees(resrg, record).length) history.set(leaveKey(record), record);
     }
     const events = buildSickLeaveEvents({
       previousRecords, nextRecords: payload, employees, version,

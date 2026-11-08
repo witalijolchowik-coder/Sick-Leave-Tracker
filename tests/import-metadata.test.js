@@ -417,3 +417,56 @@ test("retiring one project register never deletes another coordinator's staged v
   assert.deepEqual(Array.from(second.activeEmployees, (employee) => employee.id).sort(), ["hermes", "second"]);
   assert.deepEqual(Array.from(second.archivedEmployees, (employee) => employee.id), ["archive"]);
 });
+
+test("HERMES and HERMES PL publish separate registers, archives, workspace entries and news for the same PESEL", async () => {
+  const { service, documents } = await firestoreHarness();
+  const normal = "Hermes Fulfilment Sp. z o.o. UZwPT (USZO)";
+  const polish = "Hermes Fulfilment Sp. z o.o. PL UZwPT (USZO)";
+  const user = { uid: "fixture-user" };
+  const pesel = "01010100001";
+  const upload = async (project, productionNumber, archived = false) => {
+    const filename = archived ? "archiwum.xlsx" : "same-filename.xlsx";
+    const records = await data.parseEmployeeFile(workbookFile(filename, {
+      Register: [
+        ["LP", "Obecność", "Nr produkcyjny pracownika", "Nazwisko", "Imię", "PESEL"],
+        [1, project, productionNumber, "Testowa", "Anna", archived ? "02020200002" : pesel],
+      ],
+    }));
+    return service.replaceProjectEmployees({ projectName: records[0].project, records, archived, user });
+  };
+  const a = await upload(normal, "L0000001");
+  const b = await upload(polish, "L0000002");
+  await upload(normal, "L0000003", true);
+  await upload(polish, "L0000004", true);
+  const initial = await service.loadCloudData();
+  assert.notEqual(a.projectId, b.projectId);
+  assert.deepEqual(Array.from(initial.projects, (project) => projectIdentity.getHermesProject(project.projectName).label).sort(), ["HERMES", "HERMES PL"]);
+  const snapshot = (cloud, id) => cloud.projects.find((project) => project.projectId === id);
+  const originalPL = snapshot(initial, b.projectId);
+  await upload(normal, "L0000005");
+  const afterNormal = await service.loadCloudData();
+  assert.deepEqual(snapshot(afterNormal, b.projectId), originalPL);
+  const currentNormal = snapshot(afterNormal, a.projectId);
+  await upload(polish, "L0000006");
+  const cloud = await service.loadCloudData();
+  assert.deepEqual(snapshot(cloud, a.projectId), currentNormal);
+  for (const project of cloud.projects) {
+    assert.equal(project.activeEmployeeCount, 1);
+    assert.equal(project.archivedEmployeeCount, 1);
+  }
+  assert.deepEqual(Array.from(cloud.archivedEmployees, (employee) => employee.productionNumber).sort(), ["L0000003", "L0000004"]);
+  await service.saveProjectVisibility(user.uid, b.projectId, true);
+  const settings = documents.get("userSettings/" + user.uid);
+  assert.equal(settings.hiddenProjects[a.projectId], undefined);
+  const workspace = scopeWorkspace(cloud.projects, cloud.activeEmployees, [], settings.workspaceProjects);
+  assert.equal(workspace.projects.length, 2);
+  const employees = data.mergeEmployees(workspace.employees);
+  const leave = { id: pesel, certificate: "TEST", start: "2026-09-29", end: "2026-10-02", companies: ["US"] };
+  const rows = data.searchSickLeaves({ employees, sickLeaves: [leave] });
+  assert.deepEqual(Array.from(rows, ({ employee }) => employee.productionNumber).sort(), ["L0000005", "L0000006"]);
+  await service.replaceSickLeaves({ records: [leave], user, employees });
+  await service.replaceSickLeaves({ records: [{ ...leave, end: "2026-10-03" }], user, employees });
+  const updated = await service.loadCloudData();
+  assert.equal(updated.sickLeaves.length, 1);
+  assert.deepEqual(Array.from(updated.newsEvents, (event) => event.projectId).sort(), [a.projectId, b.projectId].sort());
+});

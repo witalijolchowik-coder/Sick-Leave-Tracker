@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { RESRG_ID } from "./projectIdentity.js";
+import { getHermesProject, RESRG_ID } from "./projectIdentity.js";
 
 const HEADER_SCAN_LIMIT = 15;
 
@@ -30,9 +30,7 @@ export const normalizeProject = (value) => cleanText(value) || "Bez projektu";
 
 export const normalizeProjectName = (value) => {
   const source = normalizeProject(value);
-  return /hermes fulfilment/i.test(source)
-    ? "Hermes Fulfilment Sp. z o.o. UZwPT"
-    : source;
+  return getHermesProject(source)?.name || source;
 };
 
 export const normalizeCompanyCode = (value) =>
@@ -42,8 +40,7 @@ const normalizeBusinessCode = (value) => normalizeCompanyCode(value).replace(/Z[
 
 export const projectCompanyCodes = (projectName, rawProjectName = projectName) => {
   const source = cleanText(rawProjectName || projectName);
-  const normalized = normalizeHeader(source);
-  if (normalized.includes("hermes fulfilment")) return ["US"];
+  if (getHermesProject(source)) return ["US"];
 
   const codes = [...source.matchAll(/\(([^)]+)\)/g)]
     .map((match) => normalizeBusinessCode(match[1]))
@@ -231,7 +228,7 @@ export const parseEmployeeFile = async (file) => {
       aliases: [...new Set([pesel, passportAlias].filter(Boolean))],
       pesel,
       passport,
-      ...(project === "Hermes Fulfilment Sp. z o.o. UZwPT" &&
+      ...(getHermesProject(project) &&
         /^L\d+$/.test(productionNumber) && { productionNumber }),
       employerName: indexes.employerName >= 0 ? cleanText(row[indexes.employerName]) : "",
       project,
@@ -251,13 +248,20 @@ export const mergeEmployees = (records) => {
   const sorted = [...records].sort(
     (left, right) => Number(left.archived) - Number(right.archived),
   );
-  const seenActive = new Set();
+  const seenActive = new Map();
   const seenArchive = new Set();
   return sorted.filter((employee) => {
     const keys = employee.aliases?.length ? employee.aliases : [employee.id];
     if (!employee.archived) {
-      if (keys.some((key) => seenActive.has(key))) return false;
-      keys.forEach((key) => seenActive.add(key));
+      const hermes = getHermesProject(employee.project)?.id;
+      if (keys.some((key) => {
+        const projects = seenActive.get(key);
+        return projects && (!hermes || projects.has(undefined) || projects.has(hermes));
+      })) return false;
+      keys.forEach((key) => {
+        if (!seenActive.has(key)) seenActive.set(key, new Set());
+        seenActive.get(key).add(hermes);
+      });
       return true;
     }
     // Historical snapshots can have different employer codes for the same person.
