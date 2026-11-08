@@ -101,6 +101,24 @@ service cloud.firestore {
       allow update: if signedIn() && validZusPublish(resource.data);
     }
 
+    function validProjectDisplayNameEdit(previousNames) {
+      let next = request.resource.data;
+      let id = next.editedProjectId;
+      let label = next.displayNames.get(id, null);
+      return next.keys().hasOnly(['displayNames', 'editedProjectId']) &&
+        id is string && label is string && label.size() > 0 && label.size() <= 40 &&
+        next.displayNames.diff(previousNames).affectedKeys().hasOnly([id]) &&
+        (exists(/databases/$(database)/documents/projects/$(id)) ||
+         (id == 'resrg-automotive-pl-sp-z-o-o-oddzia-boles-awiec-uzwpt-uszo-ob9g4b' &&
+          exists(/databases/$(database)/documents/projects/srg-global-boles-awiec-sp-z-o-o-uzwpt-uszo-60nn1k)));
+    }
+
+    match /appState/projectDisplayNames {
+      allow get: if signedIn();
+      allow create: if signedIn() && validProjectDisplayNameEdit({});
+      allow update: if signedIn() && validProjectDisplayNameEdit(resource.data.displayNames);
+    }
+
     match /appState/{documentId} {
       allow get: if signedIn() && documentId == 'projectVisibility_' + request.auth.uid;
     }

@@ -42,7 +42,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { exportAbsenceReport } from "../lib/absenceReport";
-import { getHermesProject, getSaintGobainProject, isLegacySrg, isResrgWorkplace, RESRG_NAME } from "../lib/projectIdentity";
+import { getHermesProject, isLegacySrg, isResrgWorkplace, RESRG_NAME } from "../lib/projectIdentity";
+import { projectPresentation } from "../lib/projectDisplayNames";
 import { downloadSickLeavePng } from "../lib/sickLeavePng";
 import { scopeWorkspace } from "../lib/workspace";
 import { toUploadDate, zusFreshness } from "../lib/zusFreshness";
@@ -123,19 +124,6 @@ const projectAccent = (project, fallbackIndex) => {
   return PROJECT_ACCENTS[fallbackIndex % PROJECT_ACCENTS.length];
 };
 
-const projectDisplayName = (project) => {
-  const normalized = project.toLowerCase();
-  if (normalized.includes("cerland")) return "CERLAND";
-  const hermes = getHermesProject(project);
-  if (hermes) return hermes.label;
-  const saintGobain = getSaintGobainProject(project);
-  if (saintGobain) return saintGobain.label;
-  if (normalized.includes("id logistics")) return "ID LOGISTICS";
-  if (isResrgWorkplace(project)) return "RESRG";
-  if (normalized.includes("toyota boshoku poland pt pl")) return "TOYOTA PL";
-  if (normalized.includes("toyota boshoku poland pt")) return "TOYOTA";
-  return project;
-};
 
 
 const eventLabels = {
@@ -350,9 +338,9 @@ function SummaryCard({
   );
 }
 
-function ProjectCard({ stats, previousRange }) {
+function ProjectCard({ stats, previousRange, presentation }) {
   const hasSickLeaves = stats.sickCount > 0;
-  const displayName = projectDisplayName(stats.project);
+  const displayName = presentation?.displayName || stats.project;
 
   return (
     <Paper
@@ -389,7 +377,7 @@ function ProjectCard({ stats, previousRange }) {
     >
       <Stack direction="row" justifyContent="space-between" spacing={0.9} height="100%">
         <Box sx={{ minWidth: 0 }}>
-          <Tooltip title={stats.project}>
+          <Tooltip title={presentation?.originalName || stats.project}>
             <Typography
               variant="body2"
               fontWeight={800}
@@ -490,7 +478,7 @@ function ProjectCard({ stats, previousRange }) {
   );
 }
 
-function NewsFeed({ events, projectStats }) {
+function NewsFeed({ events, projectStats, projectLabel }) {
   const projectColor = (projectName) =>
     projectStats.find((stats) => stats.project === projectName)?.accent || "#94A3B8";
 
@@ -554,7 +542,7 @@ function NewsFeed({ events, projectStats }) {
                     noWrap
                     sx={{ display: "block", mb: 0.65 }}
                   >
-                    {event.projectName}
+                    {projectLabel(event.projectName, event.projectId)}
                   </Typography>
                   <Typography variant="caption" sx={{ color: accent, fontWeight: 800 }}>
                     {eventLabels[event.type] || "Zmiana zwolnienia"}
@@ -597,7 +585,7 @@ function NewsFeed({ events, projectStats }) {
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const { hiddenProjects, workspaceProjects, setGlobalProjects } = useOutletContext();
+  const { hiddenProjects, workspaceProjects, displayNames, setGlobalProjects } = useOutletContext();
   const defaults = useMemo(monthRange, []);
   const [globalEmployees, setGlobalEmployees] = useState([]);
   const [sickLeaves, setSickLeaves] = useState([]);
@@ -754,12 +742,24 @@ export function DashboardPage() {
     [projects, currentPeriodRows, previousPeriodRows, employees, cloudProjects],
   );
 
+  const presentedProjects = useMemo(
+    () => projectPresentation(cloudProjects, globalEmployees, displayNames),
+    [cloudProjects, globalEmployees, displayNames],
+  );
+  const presentationById = useMemo(
+    () => new Map(presentedProjects.map((project) => [project.id, project])),
+    [presentedProjects],
+  );
+  const presentationByName = useMemo(
+    () => new Map(presentedProjects.map((project) => [project.projectName, project])),
+    [presentedProjects],
+  );
+  const projectLabel = (name, id) =>
+    (presentationById.get(id) || presentationByName.get(name))?.displayName || name;
+
   useEffect(() => {
-    setGlobalProjects(cloudProjects.map((project) => ({
-      id: project.projectId || project.id,
-      name: projectDisplayName(project.projectName),
-    })).sort((left, right) => left.name.localeCompare(right.name, "pl")));
-  }, [cloudProjects, setGlobalProjects]);
+    setGlobalProjects([...presentedProjects].sort((left, right) => left.displayName.localeCompare(right.displayName, "pl")));
+  }, [presentedProjects, setGlobalProjects]);
 
   const visibleProjectStats = projectStats.filter((stats) =>
     !hiddenProjects?.[stats.id] && (selectedProject === "all" || stats.project === selectedProject));
@@ -938,7 +938,7 @@ export function DashboardPage() {
   const hideArchiveRow = async (row) => {
     if (!row.employee.archived) return;
     const confirmed = window.confirm(
-      `Ukryć archiwalne zwolnienia pracownika ${row.employee.fullName} dla projektu ${row.employee.project}?`,
+      `Ukryć archiwalne zwolnienia pracownika ${row.employee.fullName} dla projektu ${projectLabel(row.employee.project, row.employee.projectId)}?`,
     );
     if (!confirmed) return;
     setBusy("hide-archive");
@@ -1059,7 +1059,8 @@ export function DashboardPage() {
           }}
         >
           {visibleProjectStats.map((stats) => (
-            <ProjectCard key={stats.project} stats={stats} previousRange={previousRange} />
+            <ProjectCard key={stats.project} stats={stats} previousRange={previousRange}
+              presentation={presentationById.get(stats.id)} />
           ))}
         </Box>
       )}
@@ -1072,7 +1073,7 @@ export function DashboardPage() {
           alignItems: "start",
         }}
       >
-        <NewsFeed events={visibleNewsEvents} projectStats={projectStats} />
+        <NewsFeed events={visibleNewsEvents} projectStats={projectStats} projectLabel={projectLabel} />
 
         <Paper sx={{ p: 2, minWidth: 0 }}>
           <Stack spacing={1.4}>
@@ -1099,7 +1100,7 @@ export function DashboardPage() {
                   <MenuItem value="all">Wszystkie projekty ({projects.length})</MenuItem>
                   {projects.map((project) => (
                     <MenuItem key={project} value={project}>
-                      {project}
+                      {projectLabel(project)}
                     </MenuItem>
                   ))}
                 </Select>
@@ -1283,7 +1284,7 @@ export function DashboardPage() {
                                 )}
                               </Stack>
                               <Typography variant="caption" color="text.secondary">
-                                {row.employee.project}
+                                {projectLabel(row.employee.project, row.employee.projectId)}
                               </Typography>
                             </Box>
                             {row.employee.archived && (

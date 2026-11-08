@@ -1,23 +1,14 @@
 import CloudDoneRoundedIcon from "@mui/icons-material/CloudDoneRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
-import RemoveCircleOutlineRoundedIcon from "@mui/icons-material/RemoveCircleOutlineRounded";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import {
-  Alert,
   AppBar,
   Avatar,
   Box,
   Button,
   Chip,
   Container,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  FormControlLabel,
-  FormGroup,
   IconButton,
-  Switch,
   Toolbar,
   Tooltip,
   Typography,
@@ -26,6 +17,8 @@ import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { saveProjectVisibility, setWorkspaceProject, subscribeToUserSettings } from "../../services/firestoreData";
+import { subscribeToProjectDisplayNames } from "../../services/projectDisplayNames";
+import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 
 export function AppLayout() {
   const { user, signOut } = useAuth();
@@ -34,6 +27,8 @@ export function AppLayout() {
   const [settings, setSettings] = useState(null);
   const [pendingProjects, setPendingProjects] = useState({});
   const [settingsError, setSettingsError] = useState("");
+  const [displayNames, setDisplayNames] = useState(null);
+  const [displayNamesError, setDisplayNamesError] = useState("");
 
   useEffect(() => {
     setSettings(null);
@@ -42,6 +37,16 @@ export function AppLayout() {
     if (!user?.uid) return;
     return subscribeToUserSettings(user.uid, setSettings,
       () => setSettingsError("Nie udało się odczytać ustawień projektów."));
+  }, [user?.uid]);
+
+  useEffect(() => {
+    setDisplayNames(null);
+    setDisplayNamesError("");
+    if (!user?.uid) return;
+    return subscribeToProjectDisplayNames((names) => {
+      setDisplayNames(names);
+      setDisplayNamesError("");
+    }, () => setDisplayNamesError("Nie udało się odczytać krótkich nazw projektów."));
   }, [user?.uid]);
 
   const changeProject = async (projectId, save) => {
@@ -61,8 +66,6 @@ export function AppLayout() {
   };
   const workspaceProjects = settings?.workspaceProjects;
   const hiddenProjects = settings?.hiddenProjects;
-  const myProjects = globalProjects.filter(({ id }) => workspaceProjects?.[id]);
-  const availableProjects = globalProjects.filter(({ id }) => !workspaceProjects?.[id]);
   const changeMembership = (id, member) =>
     changeProject(id, () => setWorkspaceProject(user.uid, id, member));
 
@@ -136,52 +139,19 @@ export function AppLayout() {
         </Toolbar>
       </AppBar>
       <Container maxWidth="xl" sx={{ py: { xs: 2, md: 2.25 } }}>
-        <Outlet context={{ hiddenProjects, workspaceProjects, setGlobalProjects }} />
+        <Outlet context={{ hiddenProjects, workspaceProjects, displayNames: displayNames ?? undefined, setGlobalProjects }} />
       </Container>
-      <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="xs" fullWidth aria-labelledby="settings-title">
-        <DialogTitle id="settings-title">Ustawienia</DialogTitle>
-        <DialogContent>
-          {settingsError && <Alert severity="error">{settingsError}</Alert>}
-          {settings && (
-            <>
-              <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Moje projekty</Typography>
-              <FormGroup>
-                {myProjects.map(({ id, name }) => (
-                  <Box key={id} sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <FormControlLabel label={name} control={
-                      <Switch size="small" checked={!hiddenProjects[id]} disabled={pendingProjects[id]}
-                        onChange={(_event, checked) => changeProject(id,
-                          () => saveProjectVisibility(user.uid, id, !checked))} />
-                    } />
-                    <Tooltip title="Usuń z moich projektów">
-                      <span>
-                        <IconButton size="small" aria-label={`Usuń ${name} z moich projektów`}
-                          disabled={pendingProjects[id]} onClick={() => changeMembership(id, false)}>
-                          <RemoveCircleOutlineRoundedIcon fontSize="small" />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  </Box>
-                ))}
-                {!myProjects.length && <Typography variant="caption" color="text.secondary">Brak projektów</Typography>}
-              </FormGroup>
-              <Typography variant="subtitle2" sx={{ mt: 2, mb: 0.5 }}>Dostępne projekty</Typography>
-              {availableProjects.map(({ id, name }) => (
-                <Box key={id} sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <Typography variant="body2">{name}</Typography>
-                  <Button size="small" disabled={pendingProjects[id]} onClick={() => changeMembership(id, true)}>
-                    Dodaj do moich projektów
-                  </Button>
-                </Box>
-              ))}
-              {!availableProjects.length && <Typography variant="caption" color="text.secondary">Brak dostępnych projektów</Typography>}
-            </>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setSettingsOpen(false)}>Zamknij</Button>
-        </DialogActions>
-      </Dialog>
+      <ProjectSettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        projects={globalProjects}
+        settings={settings}
+        pendingProjects={pendingProjects}
+        settingsError={settingsError || displayNamesError}
+        displayNamesReady={displayNames !== null}
+        onVisibilityChange={(id, visible) => changeProject(id, () => saveProjectVisibility(user.uid, id, !visible))}
+        onMembershipChange={changeMembership}
+      />
     </Box>
   );
 }
